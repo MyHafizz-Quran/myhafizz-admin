@@ -18,7 +18,7 @@
     "pg": "^8.23.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.30.6"
+    "react-router-dom": "^7.18.5"
   },
   "devDependencies": {
     "@hono/node-server": "^2.1.5",
@@ -26,6 +26,11 @@
     "autoprefixer": "^10.6.2",
     "postcss": "^8.5.32",
     "tailwindcss": "^3.4.19",
-    "vite": "^5.4.21"
+    "vite": "^6.4.5"
+  },
+  "overrides": {
+    "better-auth": "1.7.14",
+    "@better-auth/drizzle-adapter": "1.7.14",
+    "zod": "^4.6.7"
   }
 }
