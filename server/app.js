@@ -57,6 +57,9 @@ app.use('/api/*', async (c, next) => {
   const u = await one(adminDb, 'SELECT id, email, name, "emailVerified" FROM neon_auth."user" WHERE id = $1', [payload.sub]);
   if (!u) throw fail(401, 'Compte introuvable.');
   if (!u.emailVerified) throw fail(403, "Confirme d'abord ton adresse email.");
+  // Seule la connexion Google est acceptée.
+  const g = await one(adminDb, 'SELECT 1 FROM neon_auth.account WHERE "userId" = $1 AND "providerId" = $2', [u.id, 'google']);
+  if (!g) throw fail(403, 'Connecte-toi avec Google.');
   const a = await one(adminDb, 'SELECT email, name, role FROM admin.admin_users WHERE email = lower($1)', [u.email]);
   if (!a) throw fail(403, "Ce compte n'a pas accès à l'administration.");
   adminDb.query('UPDATE admin.admin_users SET last_seen_at = now(), name = COALESCE(name, $2) WHERE email = $1', [a.email, u.name]).catch(() => {});

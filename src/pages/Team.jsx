@@ -61,7 +61,7 @@ export default function Team() {
           <div><Label>Rôle</Label><Select className="w-full" value={add.role} onChange={(e) => setAdd({ ...add, role: e.target.value })}>
             {Object.keys(ROLE_LABEL).map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}</Select>
             <p className="text-[13px] text-ink-soft mt-1.5">{ROLE_HELP[add.role]}</p></div>
-          <p className="text-[13px] text-ink-soft bg-lagon-bg rounded-xl p-3">Envoie-lui l'adresse de l'admin. Il choisit « Activer mon accès » avec cet email, puis confirme avec le code reçu.</p>
+          <p className="text-[13px] text-ink-soft bg-lagon-bg rounded-xl p-3">Envoie-lui l'adresse de l'admin. Il clique sur « Continuer avec Google » avec ce compte Google.</p>
         </div>}
       </Modal>
       <Modal open={!!del} onClose={() => setDel(null)} title="Retirer l'accès"
