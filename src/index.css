@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { font-family: Nunito, system-ui, sans-serif; color: #3C3C3C; background: #EFF9F9; -webkit-font-smoothing: antialiased; }
+input[type='date']::-webkit-calendar-picker-indicator { opacity: .6; }
