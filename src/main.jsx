@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { MeCtx } from './me';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { ChartBar, Users, UsersThree, Trophy, Bell, ShieldCheck, ClockCounterClockwise, Database, SignOut, List, X } from '@phosphor-icons/react';
+import { ChartBar, Users, UsersThree, Trophy, GameController, Bell, ShieldCheck, ClockCounterClockwise, Database, SignOut, List, X } from '@phosphor-icons/react';
 import './index.css';
 import { api, auth, clearToken, ROLE_LABEL, ApiError } from './lib';
 import { Button, Loading, ToastProvider, cx } from './ui';
@@ -13,6 +13,7 @@ import UserDetail from './pages/UserDetail';
 import Groups from './pages/Groups';
 import GroupDetail from './pages/GroupDetail';
 import Challenges from './pages/Challenges';
+import Games from './pages/Games';
 import Notifications from './pages/Notifications';
 import Team from './pages/Team';
 import Audit from './pages/Audit';
@@ -24,6 +25,7 @@ const NAV = [
   { to: '/utilisateurs', label: 'Utilisateurs', icon: Users },
   { to: '/groupes', label: 'Groupes', icon: UsersThree },
   { to: '/defis', label: 'Défis', icon: Trophy },
+  { to: '/jeux', label: 'Jeux', icon: GameController },
   { to: '/rappels', label: 'Rappels', icon: Bell },
   { sep: true },
   { to: '/equipe', label: 'Équipe admin', icon: ShieldCheck },
@@ -76,6 +78,7 @@ function Shell({ me, onSignOut }) {
             <Route path="/groupes" element={<Groups />} />
             <Route path="/groupes/:id" element={<GroupDetail />} />
             <Route path="/defis" element={<Challenges />} />
+            <Route path="/jeux" element={<Games />} />
             <Route path="/rappels" element={<Notifications />} />
             <Route path="/equipe" element={<Team />} />
             <Route path="/journal" element={<Audit />} />

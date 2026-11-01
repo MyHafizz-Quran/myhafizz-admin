@@ -397,6 +397,133 @@ app.delete('/api/challenges/:id', async (c) => {
   return c.json({ ok: true });
 });
 
+// ---------- jeux : banque de questions Al-Ilm et réglages (lus par l'app client) ----------
+const GQ_CATS = ['sira', 'prophetes', 'coran', 'compagnons', 'histoire', 'croyance', 'pratique', 'hadith', 'calendrier'];
+const GQ_STATUS = ['draft', 'review', 'published', 'disabled'];
+function questionInput(b) {
+  const category = String(b.category || '');
+  if (!GQ_CATS.includes(category)) throw fail(400, 'Catégorie inconnue.');
+  const difficulty = int(b.difficulty, 0, 3);
+  if (difficulty < 1) throw fail(400, 'Difficulté entre 1 et 3.');
+  const type = b.type === 'vrai_faux' ? 'vrai_faux' : 'qcm';
+  const question = String(b.question || '').trim().slice(0, 500);
+  if (!question) throw fail(400, 'Écris la question.');
+  let choices = Array.isArray(b.choices) ? b.choices.map((x) => String(x || '').trim().slice(0, 200)) : [];
+  if (type === 'vrai_faux') choices = ['Vrai', 'Faux'];
+  if (type === 'qcm' && (choices.length !== 4 || choices.some((x) => !x))) throw fail(400, 'Remplis les 4 choix.');
+  if (new Set(choices).size !== choices.length) throw fail(400, 'Deux choix sont identiques.');
+  const answer = int(b.answer, -1, choices.length - 1);
+  if (answer < 0) throw fail(400, 'Coche la bonne réponse.');
+  const status = GQ_STATUS.includes(b.status) ? b.status : 'draft';
+  const explanation = String(b.explanation || '').trim().slice(0, 1500);
+  const source = String(b.source || '').trim().slice(0, 300);
+  if (status === 'published' && (!explanation || !source)) throw fail(400, 'Une question publiée doit avoir une explication et une source.');
+  return [category, difficulty, type, question, JSON.stringify(choices), answer, explanation, source, String(b.note || '').trim().slice(0, 500), status];
+}
+app.get('/api/games/questions', async (c) => {
+  const { category, difficulty, status, search } = c.req.query();
+  const where = [], p = [];
+  if (GQ_CATS.includes(category)) { p.push(category); where.push(`category = $${p.length}`); }
+  if (['1', '2', '3'].includes(difficulty)) { p.push(+difficulty); where.push(`difficulty = $${p.length}`); }
+  if (GQ_STATUS.includes(status)) { p.push(status); where.push(`status = $${p.length}`); }
+  if (search) { p.push(`%${String(search).slice(0, 80)}%`); where.push(`(question ILIKE $${p.length} OR id ILIKE $${p.length})`); }
+  const page = int(c.req.query('page'), 1, 1000) || 1, limit = 50;
+  const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const [rows, tot, counts] = await Promise.all([
+    q(clientDb, `SELECT * FROM game_questions ${w} ORDER BY updated_at DESC, id LIMIT ${limit} OFFSET ${(page - 1) * limit}`, p),
+    one(clientDb, `SELECT count(*)::int AS n FROM game_questions ${w}`, p),
+    q(clientDb, `SELECT status, count(*)::int AS n FROM game_questions GROUP BY 1`),
+  ]);
+  return c.json({ rows, total: tot.n, page, limit, counts: Object.fromEntries(counts.map((r) => [r.status, r.n])) });
+});
+app.post('/api/games/questions', async (c) => {
+  const b = await c.req.json();
+  const v = questionInput(b);
+  const n = await one(clientDb, `SELECT count(*)::int + 1 AS n FROM game_questions WHERE category = $1`, [v[0]]);
+  const id = `${v[0].slice(0, 4)}-${String(n.n).padStart(3, '0')}-${Date.now().toString(36).slice(-4)}`;
+  const row = await one(clientDb, `INSERT INTO game_questions(id, category, difficulty, type, question, choices, answer, explanation, source, note, status, updated_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`, [id, ...v, c.get('admin').email]);
+  await audit(c, 'question.create', 'question', id, { status: row.status });
+  return c.json(row);
+});
+app.put('/api/games/questions/:id', async (c) => {
+  const id = c.req.param('id');
+  const v = questionInput(await c.req.json());
+  const row = await one(clientDb, `UPDATE game_questions SET category=$2, difficulty=$3, type=$4, question=$5, choices=$6, answer=$7, explanation=$8, source=$9, note=$10, status=$11,
+    updated_at=now(), updated_by=$12 WHERE id=$1 RETURNING *`, [id, ...v, c.get('admin').email]);
+  if (!row) throw fail(404, 'Question introuvable.');
+  await audit(c, 'question.update', 'question', id, { status: row.status });
+  return c.json(row);
+});
+app.patch('/api/games/questions/:id/status', async (c) => {
+  const id = c.req.param('id');
+  const { status } = await c.req.json();
+  if (!GQ_STATUS.includes(status)) throw fail(400, 'Statut inconnu.');
+  const row = await one(clientDb, `UPDATE game_questions SET status=$2, updated_at=now(), updated_by=$3 WHERE id=$1 AND ($2 <> 'published' OR (explanation <> '' AND source <> '')) RETURNING id, status`, [id, status, c.get('admin').email]);
+  if (!row) throw fail(400, 'Impossible : question introuvable, ou explication/source manquante.');
+  await audit(c, 'question.status', 'question', id, { status });
+  return c.json(row);
+});
+app.delete('/api/games/questions/:id', async (c) => {
+  const id = c.req.param('id');
+  const row = await one(clientDb, 'DELETE FROM game_questions WHERE id = $1 RETURNING question', [id]);
+  if (!row) throw fail(404, 'Question introuvable.');
+  await audit(c, 'question.delete', 'question', id, { question: row.question.slice(0, 80) });
+  return c.json({ ok: true });
+});
+app.get('/api/games/questions/export.json', async (c) => {
+  const rows = await q(clientDb, 'SELECT id, category, difficulty, type, question, choices, answer, explanation, source, note, status FROM game_questions ORDER BY id');
+  c.header('Content-Disposition', 'attachment; filename="myhafizz-questions.json"');
+  return c.json(rows);
+});
+app.post('/api/games/questions/import', async (c) => {
+  const list = await c.req.json();
+  if (!Array.isArray(list) || list.length > 2000) throw fail(400, 'Fichier JSON invalide (tableau de 2000 questions maximum).');
+  let n = 0;
+  const errors = [];
+  for (const [k, b] of list.entries()) {
+    try {
+      const v = questionInput({ status: 'review', ...b });
+      const id = String(b.id || '').trim().slice(0, 40) || `imp-${Date.now().toString(36)}-${k}`;
+      await clientDb.query(`INSERT INTO game_questions(id, category, difficulty, type, question, choices, answer, explanation, source, note, status, updated_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO UPDATE SET category=EXCLUDED.category, difficulty=EXCLUDED.difficulty, type=EXCLUDED.type,
+        question=EXCLUDED.question, choices=EXCLUDED.choices, answer=EXCLUDED.answer, explanation=EXCLUDED.explanation, source=EXCLUDED.source, note=EXCLUDED.note,
+        status=EXCLUDED.status, updated_at=now(), updated_by=EXCLUDED.updated_by`, [id, ...v, c.get('admin').email]);
+      n++;
+    } catch (e) { if (errors.length < 20) errors.push(`#${k + 1} : ${e.message}`); }
+  }
+  await audit(c, 'question.import', 'question', null, { imported: n, errors: errors.length });
+  return c.json({ imported: n, errors });
+});
+const GAME_KEYS = ['suite', 'sourate', 'ordre', 'lettres', 'ilm'];
+app.get('/api/games/settings', async (c) => {
+  const [rows, plays] = await Promise.all([
+    q(clientDb, 'SELECT key, value, updated_at, updated_by FROM game_settings'),
+    q(clientDb, `SELECT game, count(*)::int AS parties, count(DISTINCT user_id)::int AS joueurs, round(avg(score::numeric * 100 / NULLIF(total, 0)))::int AS reussite
+      FROM game_sessions WHERE created_at > now() - interval '30 days' GROUP BY 1`),
+  ]);
+  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays });
+});
+app.put('/api/games/settings', async (c) => {
+  const b = await c.req.json();
+  const games = Object.fromEntries(GAME_KEYS.map((k) => [k, b.games?.[k] !== false]));
+  const rate = (v, d) => { const n = Number(v); return Number.isFinite(n) ? Math.min(0.9, Math.max(0, n)) : d; };
+  const robot = { 1: rate(b.robot?.[1], 0.3), 2: rate(b.robot?.[2], 0.15), 3: rate(b.robot?.[3], 0.05) };
+  const r = b.rules || {};
+  const rules = {
+    questions: Math.max(3, int(r.questions, 5, 20)), ilm_questions: Math.max(3, int(r.ilm_questions, 10, 20)),
+    unlock_pct: Math.max(50, int(r.unlock_pct, 80, 100)), xp_correct: int(r.xp_correct, 10, 100), xp_perfect: int(r.xp_perfect, 20, 500),
+    streak_bonus: rate(r.streak_bonus, 0.1), streak_max: Math.min(5, Math.max(1, Number(r.streak_max) || 2)), flash_seconds: Math.max(2, int(r.flash_seconds, 3, 15)),
+  };
+  const who = c.get('admin').email;
+  for (const [key, value] of Object.entries({ games, robot, rules })) {
+    await clientDb.query(`INSERT INTO game_settings(key, value, updated_at, updated_by) VALUES ($1,$2,now(),$3)
+      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by=EXCLUDED.updated_by`, [key, value, who]);
+  }
+  await audit(c, 'games.settings', 'games', null, { games, robot, rules });
+  return c.json({ games, robot, rules });
+});
+
 // ---------- rappels et notifications ----------
 app.get('/api/notifications', async (c) => {
   const [totals, prayers, tz] = await Promise.all([
