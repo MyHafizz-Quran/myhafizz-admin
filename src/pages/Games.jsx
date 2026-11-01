@@ -4,10 +4,10 @@ import { useMe, canWrite } from '../me';
 import { api, date, num } from '../lib';
 import { Badge, Button, Card, CardHead, Empty, ErrorBox, Input, Label, Loading, Modal, PageHead, Pager, Segmented, Select, Table, Td, Textarea, useApi, useToast } from '../ui';
 
-export const CATS = { sira: 'Sira', prophetes: 'Prophètes', coran: 'Coran', compagnons: 'Compagnons', histoire: 'Histoire', croyance: 'Croyance', pratique: 'Pratique', hadith: 'Hadith', calendrier: 'Calendrier' };
+export const CATS = { sira: 'Sira', prophetes: 'Prophètes', coran: 'Coran', compagnons: 'Compagnons', histoire: 'Histoire', croyance: 'Croyance', pratique: 'Pratique', hadith: 'Hadith', calendrier: 'Calendrier', hadith_vf: 'Hadith ou pas ?' };
 const DIFF = { 1: 'Facile', 2: 'Moyen', 3: 'Difficile' };
 const STATUS = { draft: ['Brouillon', 'gray'], review: ['À vérifier', 'gold'], published: ['Publiée', 'lagon'], disabled: ['Désactivée', 'danger'] };
-const GAMES = { lettres: 'Lettres éclair', ilm: 'Al-Ilm', sourate: 'Quelle sourate ?', suite: 'La suite du verset', ordre: "Remets dans l'ordre" };
+const GAMES = { lettres: 'Lettres éclair', ilm: 'Al-Ilm', sourate: 'Quelle sourate ?', suite: 'La suite du verset', ordre: "Remets dans l'ordre", hadith: 'Hadith ou pas ?' };
 const EMPTY = { category: 'sira', difficulty: 1, type: 'qcm', question: '', choices: ['', '', '', ''], answer: 0, explanation: '', source: '', note: '', status: 'draft' };
 
 export default function Games() {
@@ -127,7 +127,7 @@ function Questions() {
 
 function QuestionForm({ edit, setEdit }) {
   const set = (k) => (e) => setEdit({ ...edit, [k]: e.target.value });
-  const choices = edit.type === 'vrai_faux' ? ['Vrai', 'Faux'] : edit.choices.length === 4 ? edit.choices : ['', '', '', ''];
+  const choices = edit.type === 'vrai_faux' ? (edit.category === 'hadith_vf' ? ['Hadith authentique', 'Pas un hadith'] : ['Vrai', 'Faux']) : edit.choices.length === 4 ? edit.choices : ['', '', '', ''];
   return (
     <div className="grid grid-cols-[1fr_300px] gap-6">
       <div className="space-y-4">
@@ -157,7 +157,7 @@ function QuestionForm({ edit, setEdit }) {
       <div>
         <Label>Aperçu mobile</Label>
         <div className="rounded-[28px] border-2 border-line bg-[#EFF9F9] p-4 text-[13px]">
-          <div className="text-[11px] font-extrabold text-ink-soft">Al-Ilm · {CATS[edit.category]}</div>
+          <div className="text-[11px] font-extrabold text-ink-soft">{edit.category === 'hadith_vf' ? 'Hadith ou pas ?' : `Al-Ilm · ${CATS[edit.category]}`}</div>
           <div className="font-black text-[15px] text-ink mt-1 mb-3 leading-snug">{edit.question || 'La question apparaîtra ici'}</div>
           <div className="space-y-2">{choices.map((ch, k) => (
             <div key={k} className={`rounded-xl border-2 border-b-4 px-2.5 py-2 font-extrabold flex gap-2 ${edit.answer === k ? 'border-lagon bg-lagon-tint text-lagon-text' : 'border-line bg-white'}`}><span>{edit.type === 'vrai_faux' ? (k ? 'F' : 'V') : 'ABCD'[k]}</span>{ch || '…'}</div>
@@ -236,6 +236,18 @@ function Settings() {
           <div><Label hint="jours, séparés par des virgules">Durées proposées</Label><Input className="w-full" disabled={!write} value={Array.isArray(s.khatma?.days) ? s.khatma.days.join(', ') : s.khatma?.days ?? '3, 7, 14'} onChange={(e) => setS({ ...s, khatma: { ...s.khatma, days: e.target.value } })} /></div>
           <div><Label hint="points pour chaque membre">Bonus de fin</Label><Input type="number" min="0" className="w-full" disabled={!write} value={s.khatma?.bonus ?? 50} onChange={(e) => setS({ ...s, khatma: { ...s.khatma, bonus: e.target.value } })} /></div>
           <div><Label hint="% pour valider une sourate">Seuil de validation</Label><Input type="number" min="50" max="100" className="w-full" disabled={!write} value={s.khatma?.pct ?? 80} onChange={(e) => setS({ ...s, khatma: { ...s.khatma, pct: e.target.value } })} /></div>
+        </div>
+      </Card>
+      <Card className="col-span-2">
+        <CardHead title="Défi du jour" sub={`Mêmes questions pour tous, un essai par jour, classement du jour. Aujourd'hui : ${num(data.defi?.aujourdhui || 0)} joueurs. 30 derniers jours : ${num(data.defi?.total || 0)} défis relevés par ${num(data.defi?.joueurs || 0)} joueurs, ${data.defi?.reussite ?? 0} % de bonnes réponses.`} />
+        <div className="px-4 pb-4 grid grid-cols-5 gap-4 items-end">
+          <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
+            <input type="checkbox" className="w-5 h-5 accent-[#00A3A8]" disabled={!write} checked={s.defi?.enabled !== false} onChange={(e) => setS({ ...s, defi: { ...s.defi, enabled: e.target.checked } })} />
+            <span className="font-extrabold">Défi activé</span>
+          </label>
+          {[['questions', 'Questions', '3 à 10, dès le lendemain', 5], ['per_good', 'Par bonne réponse', 'points', 5], ['streak_step', 'Par jour de série', 'points', 2], ['streak_max', 'Bonus de série max', 'points', 20]].map(([k, label, hint, d]) => (
+            <div key={k}><Label hint={hint}>{label}</Label><Input type="number" min="0" className="w-full" disabled={!write} value={s.defi?.[k] ?? d} onChange={(e) => setS({ ...s, defi: { ...s.defi, [k]: e.target.value } })} /></div>
+          ))}
         </div>
       </Card>
       <Card className="col-span-2">

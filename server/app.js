@@ -398,7 +398,7 @@ app.delete('/api/challenges/:id', async (c) => {
 });
 
 // ---------- jeux : banque de questions Al-Ilm et réglages (lus par l'app client) ----------
-const GQ_CATS = ['sira', 'prophetes', 'coran', 'compagnons', 'histoire', 'croyance', 'pratique', 'hadith', 'calendrier'];
+const GQ_CATS = ['sira', 'prophetes', 'coran', 'compagnons', 'histoire', 'croyance', 'pratique', 'hadith', 'calendrier', 'hadith_vf'];
 const GQ_STATUS = ['draft', 'review', 'published', 'disabled'];
 function questionInput(b) {
   const category = String(b.category || '');
@@ -409,7 +409,7 @@ function questionInput(b) {
   const question = String(b.question || '').trim().slice(0, 500);
   if (!question) throw fail(400, 'Écris la question.');
   let choices = Array.isArray(b.choices) ? b.choices.map((x) => String(x || '').trim().slice(0, 200)) : [];
-  if (type === 'vrai_faux') choices = ['Vrai', 'Faux'];
+  if (type === 'vrai_faux') choices = b.category === 'hadith_vf' ? ['Hadith authentique', 'Pas un hadith'] : ['Vrai', 'Faux'];
   if (type === 'qcm' && (choices.length !== 4 || choices.some((x) => !x))) throw fail(400, 'Remplis les 4 choix.');
   if (new Set(choices).size !== choices.length) throw fail(400, 'Deux choix sont identiques.');
   const answer = int(b.answer, -1, choices.length - 1);
@@ -495,19 +495,22 @@ app.post('/api/games/questions/import', async (c) => {
   await audit(c, 'question.import', 'question', null, { imported: n, errors: errors.length });
   return c.json({ imported: n, errors });
 });
-const GAME_KEYS = ['suite', 'sourate', 'ordre', 'lettres', 'ilm'];
+const GAME_KEYS = ['suite', 'sourate', 'ordre', 'lettres', 'ilm', 'hadith'];
 app.get('/api/games/settings', async (c) => {
-  const [rows, plays, duels, khatmas] = await Promise.all([
+  const [rows, plays, duels, khatmas, defi] = await Promise.all([
     q(clientDb, 'SELECT key, value, updated_at, updated_by FROM game_settings'),
     one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS termines,
       count(*) FILTER (WHERE status = 'done' AND quit_by IS NOT NULL)::int AS abandons, count(*) FILTER (WHERE status IN ('declined','expired'))::int AS refuses,
       count(DISTINCT u)::int AS joueurs FROM live_duels, LATERAL unnest(ARRAY[challenger, opponent]) u WHERE created_at > now() - interval '30 days'`),
     one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS terminees, count(*) FILTER (WHERE status = 'active')::int AS en_cours,
       count(DISTINCT group_id)::int AS groupes FROM team_khatmas WHERE created_at > now() - interval '30 days'`),
+    one(clientDb, `SELECT count(*) FILTER (WHERE day = (now() AT TIME ZONE 'UTC')::date AND finished_at IS NOT NULL)::int AS aujourdhui,
+      count(*) FILTER (WHERE finished_at IS NOT NULL)::int AS total, count(DISTINCT user_id)::int AS joueurs,
+      round(avg(score * 100.0 / NULLIF(total, 0)))::int AS reussite FROM daily_results WHERE day > (now() AT TIME ZONE 'UTC')::date - 30`),
     q(clientDb, `SELECT game, count(*)::int AS parties, count(DISTINCT user_id)::int AS joueurs, round(avg(score::numeric * 100 / NULLIF(total, 0)))::int AS reussite
       FROM game_sessions WHERE created_at > now() - interval '30 days' GROUP BY 1`),
   ]);
-  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels, khatmas });
+  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels, khatmas, defi });
 });
 app.put('/api/games/settings', async (c) => {
   const b = await c.req.json();
@@ -526,13 +529,15 @@ app.put('/api/games/settings', async (c) => {
   const kb = b.khatma || {};
   const dayList = [...new Set((Array.isArray(kb.days) ? kb.days : String(kb.days || '').split(/[\s,;]+/)).map((x) => int(x, 0, 30)).filter((x) => x >= 1))].sort((a, b) => a - b).slice(0, 4);
   const khatma = { enabled: kb.enabled !== false, days: dayList.length ? dayList : [3, 7, 14], bonus: int(kb.bonus, 50, 1000), pct: Math.max(50, int(kb.pct, 80, 100)) };
+  const df = b.defi || {};
+  const defi = { enabled: df.enabled !== false, questions: Math.max(3, int(df.questions, 5, 10)), per_good: int(df.per_good, 5, 100), streak_step: int(df.streak_step, 2, 50), streak_max: int(df.streak_max, 20, 500) };
   const who = c.get('admin').email;
-  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma })) {
+  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma, defi })) {
     await clientDb.query(`INSERT INTO game_settings(key, value, updated_at, updated_by) VALUES ($1,$2,now(),$3)
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by=EXCLUDED.updated_by`, [key, value, who]);
   }
-  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma });
-  return c.json({ games, robot, rules, duel, khatma });
+  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma, defi });
+  return c.json({ games, robot, rules, duel, khatma, defi });
 });
 
 // ---------- rappels et notifications ----------
