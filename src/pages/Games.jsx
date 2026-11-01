@@ -258,6 +258,17 @@ function Settings() {
         </div>
       </Card>
       <Card className="col-span-2">
+        <CardHead title="Live La Mecque et Médine" sub="Lien YouTube du direct officiel (vidéo en direct ou chaîne). Il s'affiche sur l'accueil pour tout le monde, sans nouvelle version. Laisse vide pour masquer." />
+        <div className="px-4 pb-4 grid grid-cols-5 gap-4 items-end">
+          <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
+            <input type="checkbox" className="w-5 h-5 accent-[#00A3A8]" disabled={!write} checked={s.live?.enabled !== false} onChange={(e) => setS({ ...s, live: { ...s.live, enabled: e.target.checked } })} />
+            <span className="font-extrabold">Live affiché</span>
+          </label>
+          <div className="col-span-2"><Label hint="https://www.youtube.com/...">La Mecque (Masjid al-Haram)</Label><Input className="w-full" disabled={!write} value={s.live?.mecque || ''} onChange={(e) => setS({ ...s, live: { ...s.live, mecque: e.target.value } })} /></div>
+          <div className="col-span-2"><Label hint="https://www.youtube.com/...">Médine (Masjid an-Nabawi)</Label><Input className="w-full" disabled={!write} value={s.live?.medine || ''} onChange={(e) => setS({ ...s, live: { ...s.live, medine: e.target.value } })} /></div>
+        </div>
+      </Card>
+      <Card className="col-span-2">
         <CardHead title="Tournois" sub="Points gagnés à la fin d'un tournoi (être éliminé ne retire rien) et délais entre les matchs." />
         <div className="px-4 pb-4 grid grid-cols-6 gap-4 items-end">
           <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">

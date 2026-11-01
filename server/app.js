@@ -569,13 +569,16 @@ app.put('/api/games/settings', async (c) => {
   const lg = b.ligue || {};
   const ligue = { enabled: lg.enabled !== false, size: Math.max(10, int(lg.size, 30, 50)), up: Math.max(1, int(lg.up, 7, 20)), down: int(lg.down, 5, 20), learn_day: int(lg.learn_day, 20, 200),
     start: /^\d{4}-\d{2}-\d{2}$/.test(String(lg.start || '')) ? lg.start : '2026-11-02' };
+  const lv = b.live || {};
+  const yt = (u) => { const v = String(u || '').trim().slice(0, 300); return !v || /^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(v) ? v : ''; };
+  const live = { enabled: lv.enabled !== false, mecque: yt(lv.mecque), medine: yt(lv.medine) };
   const who = c.get('admin').email;
-  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma, defi, ligue, tournoi })) {
+  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma, defi, ligue, tournoi, live })) {
     await clientDb.query(`INSERT INTO game_settings(key, value, updated_at, updated_by) VALUES ($1,$2,now(),$3)
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by=EXCLUDED.updated_by`, [key, value, who]);
   }
-  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma, defi, ligue, tournoi });
-  return c.json({ games, robot, rules, duel, khatma, defi, ligue, tournoi });
+  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma, defi, ligue, tournoi, live });
+  return c.json({ games, robot, rules, duel, khatma, defi, ligue, tournoi, live });
 });
 
 // ---------- rappels et notifications ----------
