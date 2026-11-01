@@ -4,7 +4,7 @@ import { useMe, canWrite } from '../me';
 import { api, date, num } from '../lib';
 import { Badge, Button, Card, CardHead, Empty, ErrorBox, Input, Label, Loading, Modal, PageHead, Pager, Segmented, Select, Table, Td, Textarea, useApi, useToast } from '../ui';
 
-export const CATS = { sira: 'Sira', prophetes: 'Prophètes', coran: 'Coran', compagnons: 'Compagnons', histoire: 'Histoire', croyance: 'Croyance', pratique: 'Pratique', hadith: 'Hadith', calendrier: 'Calendrier', hadith_vf: 'Hadith ou pas ?' , tafsir: 'Tafsir'};
+export const CATS = { sira: 'Sira', prophetes: 'Prophètes', coran: 'Coran', compagnons: 'Compagnons', histoire: 'Histoire', croyance: 'Croyance', pratique: 'Pratique', hadith: 'Hadith', calendrier: 'Calendrier', noms: '99 noms d\'Allah', hadith_vf: 'Hadith ou pas ?' , tafsir: 'Tafsir'};
 const DIFF = { 1: 'Facile', 2: 'Moyen', 3: 'Difficile' };
 const STATUS = { draft: ['Brouillon', 'gray'], review: ['À vérifier', 'gold'], published: ['Publiée', 'lagon'], disabled: ['Désactivée', 'danger'] };
 const GAMES = { lettres: 'Lettres éclair', ilm: 'Al-Ilm', sourate: 'Quelle sourate ?', suite: 'La suite du verset', ordre: "Remets dans l'ordre", hadith: 'Hadith ou pas ?' };

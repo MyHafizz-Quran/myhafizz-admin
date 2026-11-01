@@ -398,7 +398,7 @@ app.delete('/api/challenges/:id', async (c) => {
 });
 
 // ---------- jeux : banque de questions Al-Ilm et réglages (lus par l'app client) ----------
-const GQ_CATS = ['sira', 'prophetes', 'coran', 'compagnons', 'histoire', 'croyance', 'pratique', 'hadith', 'calendrier', 'hadith_vf', 'tafsir'];
+const GQ_CATS = ['sira', 'prophetes', 'coran', 'compagnons', 'histoire', 'croyance', 'pratique', 'hadith', 'calendrier', 'noms', 'hadith_vf', 'tafsir'];
 const GQ_STATUS = ['draft', 'review', 'published', 'disabled'];
 function questionInput(b) {
   const category = String(b.category || '');
@@ -582,6 +582,43 @@ app.put('/api/games/settings', async (c) => {
 });
 
 // ---------- rappels et notifications ----------
+
+// ---- Contenus : 99 noms d'Allah et lexique mot à mot ----
+const C_STATUS = ['draft', 'review', 'published', 'disabled'];
+app.get('/api/names', async (c) => c.json(await q(clientDb, 'SELECT * FROM allah_names ORDER BY n')));
+app.put('/api/names/:n', async (c) => {
+  const n = Number(c.req.param('n'));
+  const b = await c.req.json();
+  const t = (v, max = 3000) => (v == null || String(v).trim() === '' ? null : String(v).trim().slice(0, max));
+  if (!t(b.ar) || !t(b.translit) || !t(b.meaning)) throw fail(400, 'Arabe, phonétique et sens sont obligatoires.');
+  if (b.status && !C_STATUS.includes(b.status)) throw fail(400, 'Statut inconnu.');
+  const row = await one(clientDb, `UPDATE allah_names SET ar=$2, translit=$3, meaning=$4, explanation=$5, verse_ref=$6, verse_ar=$7, verse_fr=$8, invocation=$9, invocation_src=$10,
+    status=COALESCE($11, status), updated_at=now(), updated_by=$12 WHERE n=$1 RETURNING *`,
+    [n, t(b.ar), t(b.translit), t(b.meaning), t(b.explanation) || '', t(b.verse_ref, 20), t(b.verse_ar), t(b.verse_fr), t(b.invocation), t(b.invocation_src, 200), b.status || null, c.get('admin').email]);
+  if (!row) throw fail(404, 'Nom introuvable.');
+  await audit(c, 'name.update', 'allah_name', String(n), { status: row.status });
+  return c.json(row);
+});
+app.get('/api/lexicon/summary', async (c) => c.json(await q(clientDb, `SELECT surah, count(*)::int AS words, count(fr)::int AS fr, count(*) FILTER (WHERE status='published')::int AS published
+  FROM word_fr GROUP BY surah ORDER BY surah`)));
+app.get('/api/lexicon/:surah', async (c) => c.json(await q(clientDb, 'SELECT * FROM word_fr WHERE surah=$1 ORDER BY ayah, pos', [Number(c.req.param('surah'))])));
+app.patch('/api/lexicon/:surah/:ayah/:pos', async (c) => {
+  const { fr, status } = await c.req.json();
+  if (status && !C_STATUS.includes(status)) throw fail(400, 'Statut inconnu.');
+  const clean = fr == null ? undefined : String(fr).trim().slice(0, 120) || null;
+  if (status === 'published' && clean === null) throw fail(400, 'Il faut un sens en français avant de publier.');
+  const row = await one(clientDb, `UPDATE word_fr SET fr = CASE WHEN $4::boolean THEN $5 ELSE fr END, status = COALESCE($6, CASE WHEN $4::boolean AND $5 IS NOT NULL AND status='draft' THEN 'review' ELSE status END),
+    updated_at=now(), updated_by=$7 WHERE surah=$1 AND ayah=$2 AND pos=$3 AND ($6 IS DISTINCT FROM 'published' OR COALESCE(CASE WHEN $4::boolean THEN $5 ELSE fr END, '') <> '') RETURNING *`,
+    [Number(c.req.param('surah')), Number(c.req.param('ayah')), Number(c.req.param('pos')), clean !== undefined, clean ?? null, status || null, c.get('admin').email]);
+  if (!row) throw fail(400, 'Mot introuvable ou sens manquant.');
+  return c.json(row);
+});
+app.post('/api/lexicon/:surah/publish', async (c) => {
+  const s = Number(c.req.param('surah'));
+  const r = await q(clientDb, `UPDATE word_fr SET status='published', updated_at=now(), updated_by=$2 WHERE surah=$1 AND fr IS NOT NULL AND fr <> '' AND status <> 'published' RETURNING pos`, [s, c.get('admin').email]);
+  await audit(c, 'lexicon.publish', 'surah', String(s), { count: r.length });
+  return c.json({ count: r.length });
+});
 app.get('/api/notifications', async (c) => {
   const [totals, prayers, tz] = await Promise.all([
     one(clientDb, `SELECT (SELECT count(*) FROM prayer_reminders)::int AS reminders, (SELECT count(DISTINCT user_id) FROM prayer_reminders)::int AS reminder_users,
