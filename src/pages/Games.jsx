@@ -214,6 +214,18 @@ function Settings() {
         </div>
       </Card>
       <Card className="col-span-2">
+        <CardHead title="Duels 1 contre 1" sub={`Duels en différé : mêmes questions pour les deux joueurs. 30 derniers jours : ${num(data.duels?.total || 0)} duels, ${num(data.duels?.termines || 0)} terminés, ${num(data.duels?.en_cours || 0)} en cours, ${num(data.duels?.joueurs || 0)} joueurs.`} />
+        <div className="px-4 pb-4 grid grid-cols-4 gap-4 items-end">
+          <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
+            <input type="checkbox" className="w-5 h-5 accent-[#00A3A8]" disabled={!write} checked={s.duel?.enabled !== false} onChange={(e) => setS({ ...s, duel: { ...s.duel, enabled: e.target.checked } })} />
+            <span className="font-extrabold">Duels activés</span>
+          </label>
+          {[['hours', 'Délai pour jouer', 'heures, 1 à 168', 24], ['win_bonus', 'Bonus de victoire', 'points', 20], ['daily_limit', 'Duels lancés par jour', 'par joueur', 10]].map(([k, label, hint, d]) => (
+            <div key={k}><Label hint={hint}>{label}</Label><Input type="number" min="1" className="w-full" disabled={!write} value={s.duel?.[k] ?? d} onChange={(e) => setS({ ...s, duel: { ...s.duel, [k]: e.target.value } })} /></div>
+          ))}
+        </div>
+      </Card>
+      <Card className="col-span-2">
         <CardHead title="Règles" sub="Nombre de questions, déblocage des niveaux, points et chrono." />
         <div className="px-4 pb-4 grid grid-cols-4 gap-4">
           {R({ k: "questions", label: "Questions par partie", hint: "3 à 20", min: "3", max: "20" })}

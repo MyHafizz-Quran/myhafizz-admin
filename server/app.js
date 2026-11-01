@@ -497,12 +497,15 @@ app.post('/api/games/questions/import', async (c) => {
 });
 const GAME_KEYS = ['suite', 'sourate', 'ordre', 'lettres', 'ilm'];
 app.get('/api/games/settings', async (c) => {
-  const [rows, plays] = await Promise.all([
+  const [rows, plays, duels] = await Promise.all([
     q(clientDb, 'SELECT key, value, updated_at, updated_by FROM game_settings'),
+    one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS termines,
+      count(*) FILTER (WHERE status = 'pending' AND expires_at > now())::int AS en_cours,
+      count(DISTINCT u)::int AS joueurs FROM game_duels, LATERAL unnest(ARRAY[challenger, opponent]) u WHERE created_at > now() - interval '30 days'`),
     q(clientDb, `SELECT game, count(*)::int AS parties, count(DISTINCT user_id)::int AS joueurs, round(avg(score::numeric * 100 / NULLIF(total, 0)))::int AS reussite
       FROM game_sessions WHERE created_at > now() - interval '30 days' GROUP BY 1`),
   ]);
-  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays });
+  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels });
 });
 app.put('/api/games/settings', async (c) => {
   const b = await c.req.json();
@@ -515,13 +518,15 @@ app.put('/api/games/settings', async (c) => {
     unlock_pct: Math.max(50, int(r.unlock_pct, 80, 100)), xp_correct: int(r.xp_correct, 10, 100), xp_perfect: int(r.xp_perfect, 20, 500),
     streak_bonus: rate(r.streak_bonus, 0.1), streak_max: Math.min(5, Math.max(1, Number(r.streak_max) || 2)), flash_seconds: Math.max(2, int(r.flash_seconds, 3, 15)),
   };
+  const d = b.duel || {};
+  const duel = { enabled: d.enabled !== false, hours: Math.max(1, int(d.hours, 24, 168)), win_bonus: int(d.win_bonus, 20, 500), daily_limit: Math.max(1, int(d.daily_limit, 10, 100)) };
   const who = c.get('admin').email;
-  for (const [key, value] of Object.entries({ games, robot, rules })) {
+  for (const [key, value] of Object.entries({ games, robot, rules, duel })) {
     await clientDb.query(`INSERT INTO game_settings(key, value, updated_at, updated_by) VALUES ($1,$2,now(),$3)
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by=EXCLUDED.updated_by`, [key, value, who]);
   }
-  await audit(c, 'games.settings', 'games', null, { games, robot, rules });
-  return c.json({ games, robot, rules });
+  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel });
+  return c.json({ games, robot, rules, duel });
 });
 
 // ---------- rappels et notifications ----------
