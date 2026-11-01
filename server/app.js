@@ -513,6 +513,31 @@ app.get('/api/games/settings', async (c) => {
   ]);
   return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels, khatmas, defi, ligues });
 });
+app.get('/api/tournaments', async (c) => {
+  const rows = await q(clientDb, `SELECT t.id, t.title, t.starts_at, t.size, t.status, t.round, t.rounds, g.name AS group_name,
+      (SELECT count(*)::int FROM tournament_players p WHERE p.tournament_id = t.id) AS players,
+      (SELECT username FROM profiles WHERE id = t.champion) AS champion
+    FROM tournaments t LEFT JOIN study_groups g ON g.id = t.group_id ORDER BY (t.status IN ('open','running')) DESC, t.starts_at DESC LIMIT 40`);
+  return c.json({ rows });
+});
+app.post('/api/tournaments', async (c) => {
+  const b = await c.req.json();
+  const title = String(b.title || '').trim().slice(0, 60) || 'Tournoi';
+  const at = new Date(b.starts_at);
+  if (Number.isNaN(at.getTime()) || at.getTime() < Date.now() + 10 * 60e3) return c.json({ error: "Choisis une date au moins 10 minutes à l'avance." }, 400);
+  const size = Number(b.size) === 8 ? 8 : 16;
+  const row = await one(clientDb, `INSERT INTO tournaments (title, starts_at, size) VALUES ($1, $2, $3) RETURNING id, title, starts_at, size`, [title, at.toISOString(), size]);
+  await audit(c, 'tournament.create', 'tournament', row.id, { title, starts_at: row.starts_at, size });
+  return c.json(row);
+});
+app.post('/api/tournaments/:id/cancel', async (c) => {
+  const id = c.req.param('id');
+  const row = await one(clientDb, `UPDATE tournaments SET status = 'cancelled', finished_at = now() WHERE id = $1 AND status = 'open' RETURNING id, title`, [id]);
+  if (!row) return c.json({ error: 'Seul un tournoi pas encore commencé peut être annulé.' }, 400);
+  await q(clientDb, `INSERT INTO notifications (user_id, kind, ref, data, push) SELECT user_id, 'tournoi_cancel', $1, jsonb_build_object('title', $2::text), false FROM tournament_players WHERE tournament_id = $1`, [id, row.title]);
+  await audit(c, 'tournament.cancel', 'tournament', id, { title: row.title });
+  return c.json({ ok: true });
+});
 app.put('/api/games/settings', async (c) => {
   const b = await c.req.json();
   const games = Object.fromEntries(GAME_KEYS.map((k) => [k, b.games?.[k] !== false]));
@@ -532,16 +557,18 @@ app.put('/api/games/settings', async (c) => {
   const khatma = { enabled: kb.enabled !== false, days: dayList.length ? dayList : [3, 7, 14], bonus: int(kb.bonus, 50, 1000), pct: Math.max(50, int(kb.pct, 80, 100)) };
   const df = b.defi || {};
   const defi = { enabled: df.enabled !== false, questions: Math.max(3, int(df.questions, 5, 10)), per_good: int(df.per_good, 5, 100), streak_step: int(df.streak_step, 2, 50), streak_max: int(df.streak_max, 20, 500) };
+  const tn = b.tournoi || {};
+  const tournoi = { enabled: tn.enabled !== false, win: int(tn.win, 200, 2000), final: int(tn.final, 100, 2000), semi: int(tn.semi, 50, 2000), wait_secs: Math.max(20, int(tn.wait_secs, 60, 300)), gap_secs: Math.max(20, int(tn.gap_secs, 60, 600)) };
   const lg = b.ligue || {};
   const ligue = { enabled: lg.enabled !== false, size: Math.max(10, int(lg.size, 30, 50)), up: Math.max(1, int(lg.up, 7, 20)), down: int(lg.down, 5, 20), learn_day: int(lg.learn_day, 20, 200),
     start: /^\d{4}-\d{2}-\d{2}$/.test(String(lg.start || '')) ? lg.start : '2026-11-02' };
   const who = c.get('admin').email;
-  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma, defi, ligue })) {
+  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma, defi, ligue, tournoi })) {
     await clientDb.query(`INSERT INTO game_settings(key, value, updated_at, updated_by) VALUES ($1,$2,now(),$3)
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by=EXCLUDED.updated_by`, [key, value, who]);
   }
-  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma, defi, ligue });
-  return c.json({ games, robot, rules, duel, khatma, defi, ligue });
+  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma, defi, ligue, tournoi });
+  return c.json({ games, robot, rules, duel, khatma, defi, ligue, tournoi });
 });
 
 // ---------- rappels et notifications ----------

@@ -15,8 +15,8 @@ export default function Games() {
   return (
     <>
       <PageHead title="Jeux" sub="Questions et réglages appliqués à tous les joueurs, sans mise à jour de l'app."
-        right={<Segmented value={tab} onChange={setTab} options={[{ value: 'questions', label: 'Questions Al-Ilm' }, { value: 'settings', label: 'Réglages des jeux' }]} />} />
-      {tab === 'questions' ? <Questions /> : <Settings />}
+        right={<Segmented value={tab} onChange={setTab} options={[{ value: 'questions', label: 'Questions Al-Ilm' }, { value: 'tournois', label: 'Tournois' }, { value: 'settings', label: 'Réglages des jeux' }]} />} />
+      {tab === 'questions' ? <Questions /> : tab === 'tournois' ? <Tournaments /> : <Settings />}
     </>
   );
 }
@@ -251,6 +251,18 @@ function Settings() {
         </div>
       </Card>
       <Card className="col-span-2">
+        <CardHead title="Tournois" sub="Points gagnés à la fin d'un tournoi (être éliminé ne retire rien) et délais entre les matchs." />
+        <div className="px-4 pb-4 grid grid-cols-6 gap-4 items-end">
+          <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
+            <input type="checkbox" className="w-5 h-5 accent-[#00A3A8]" disabled={!write} checked={s.tournoi?.enabled !== false} onChange={(e) => setS({ ...s, tournoi: { ...s.tournoi, enabled: e.target.checked } })} />
+            <span className="font-extrabold">Tournois activés</span>
+          </label>
+          {[['win', 'Vainqueur', 'points', 200], ['final', 'Finaliste', 'points', 100], ['semi', 'Demi-finale', 'points', 50], ['wait_secs', 'Attente absent', 'secondes', 60], ['gap_secs', 'Pause entre tours', 'secondes', 60]].map(([k, label, hint, d]) => (
+            <div key={k}><Label hint={hint}>{label}</Label><Input type="number" min="0" className="w-full" disabled={!write} value={s.tournoi?.[k] ?? d} onChange={(e) => setS({ ...s, tournoi: { ...s.tournoi, [k]: e.target.value } })} /></div>
+          ))}
+        </div>
+      </Card>
+      <Card className="col-span-2">
         <CardHead title="Ligues de la semaine" sub={`Du lundi au dimanche (UTC). Cette semaine : ${(data.ligues || []).map((l) => `${['Bronze', 'Argent', 'Or', 'Émeraude', 'Saphir', 'Diamant'][l.tier - 1]} ${num(l.joueurs)} joueurs (${num(l.groupes)} groupes)`).join(' · ') || 'aucun joueur classé pour l\'instant'}.`} />
         <div className="px-4 pb-4 grid grid-cols-6 gap-4 items-end">
           <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
@@ -276,6 +288,60 @@ function Settings() {
           {R({ k: "streak_max", label: "Multiplicateur maximum", hint: "ex. 2", step: "0.5", min: "1", max: "5" })}
         </div>
         {write && <div className="px-4 pb-4 flex justify-end"><Button loading={busy} onClick={save}>Appliquer à tous</Button></div>}
+      </Card>
+    </div>
+  );
+}
+
+const TN_STATUS = { open: ['Inscriptions', 'lagon'], running: ['En cours', 'gold'], done: ['Terminé', 'gray'], cancelled: ['Annulé', 'danger'] };
+function Tournaments() {
+  const write = canWrite(useMe());
+  const toast = useToast();
+  const { data, error, reload } = useApi(() => api('/tournaments'), []);
+  const next = new Date(); next.setUTCDate(next.getUTCDate() + ((5 - next.getUTCDay() + 7) % 7 || 7));
+  const [f, setF] = useState({ title: 'Tournoi du vendredi', day: next.toISOString().slice(0, 10), time: '21:00', size: 16 });
+  const [busy, setBusy] = useState(false);
+  const create = async () => {
+    setBusy(true);
+    try { await api('/tournaments', { method: 'POST', body: { title: f.title, starts_at: `${f.day}T${f.time}:00Z`, size: f.size } }); toast('Tournoi programmé.'); reload(); } catch (e) { toast(e.message, 'error'); }
+    setBusy(false);
+  };
+  const cancel = async (t) => {
+    if (!window.confirm(`Annuler « ${t.title} » ? Les inscrits seront prévenus.`)) return;
+    try { await api(`/tournaments/${t.id}/cancel`, { method: 'POST' }); toast('Tournoi annulé.'); reload(); } catch (e) { toast(e.message, 'error'); }
+  };
+  if (error) return <ErrorBox error={error} />;
+  if (!data) return <Loading />;
+  return (
+    <div className="space-y-4">
+      {write && (
+        <Card>
+          <CardHead title="Programmer un tournoi officiel" sub="Visible par tous les joueurs. Heure UTC (Bamako, Abidjan). Rappel envoyé aux inscrits 10 minutes avant ; annulé automatiquement s'il y a moins de 4 inscrits." />
+          <div className="px-4 pb-4 grid grid-cols-5 gap-4 items-end">
+            <div className="col-span-2"><Label>Nom</Label><Input className="w-full" maxLength={60} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></div>
+            <div><Label>Jour</Label><Input type="date" className="w-full" value={f.day} onChange={(e) => setF({ ...f, day: e.target.value })} /></div>
+            <div><Label hint="UTC">Heure</Label><Input type="time" className="w-full" value={f.time} onChange={(e) => setF({ ...f, time: e.target.value })} /></div>
+            <div><Label>Places</Label><Select className="w-full" value={f.size} onChange={(e) => setF({ ...f, size: Number(e.target.value) })}><option value={16}>16 joueurs</option><option value={8}>8 joueurs</option></Select></div>
+          </div>
+          <div className="px-4 pb-4"><Button onClick={create} disabled={busy}><Plus weight="bold" />Programmer</Button></div>
+        </Card>
+      )}
+      <Card>
+        <CardHead title="Tournois" sub="Officiels et tournois privés des groupes." />
+        {!data.rows.length ? <Empty title="Aucun tournoi" /> : (
+          <Table head={['Tournoi', 'Date (UTC)', 'Inscrits', 'Statut', 'Vainqueur', '']}>
+            {data.rows.map((t) => (
+              <tr key={t.id}>
+                <Td><b>{t.title}</b>{t.group_name && <span className="block text-xs text-muted">Groupe : {t.group_name}</span>}</Td>
+                <Td>{new Date(t.starts_at).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })}</Td>
+                <Td>{num(t.players)} / {t.size}</Td>
+                <Td><Badge tone={TN_STATUS[t.status][1]}>{TN_STATUS[t.status][0]}{t.status === 'running' && t.rounds ? ` · tour ${t.round}/${t.rounds}` : ''}</Badge></Td>
+                <Td>{t.champion ? `@${t.champion}` : '—'}</Td>
+                <Td>{write && t.status === 'open' && <Button variant="ghost" onClick={() => cancel(t)}>Annuler</Button>}</Td>
+              </tr>
+            ))}
+          </Table>
+        )}
       </Card>
     </div>
   );
