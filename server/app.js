@@ -497,7 +497,7 @@ app.post('/api/games/questions/import', async (c) => {
 });
 const GAME_KEYS = ['suite', 'sourate', 'ordre', 'lettres', 'ilm', 'hadith'];
 app.get('/api/games/settings', async (c) => {
-  const [rows, plays, duels, khatmas, defi] = await Promise.all([
+  const [rows, plays, duels, khatmas, defi, ligues] = await Promise.all([
     q(clientDb, 'SELECT key, value, updated_at, updated_by FROM game_settings'),
     one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS termines,
       count(*) FILTER (WHERE status = 'done' AND quit_by IS NOT NULL)::int AS abandons, count(*) FILTER (WHERE status IN ('declined','expired'))::int AS refuses,
@@ -507,10 +507,11 @@ app.get('/api/games/settings', async (c) => {
     one(clientDb, `SELECT count(*) FILTER (WHERE day = (now() AT TIME ZONE 'UTC')::date AND finished_at IS NOT NULL)::int AS aujourdhui,
       count(*) FILTER (WHERE finished_at IS NOT NULL)::int AS total, count(DISTINCT user_id)::int AS joueurs,
       round(avg(score * 100.0 / NULLIF(total, 0)))::int AS reussite FROM daily_results WHERE day > (now() AT TIME ZONE 'UTC')::date - 30`),
+    q(clientDb, `SELECT tier, count(*)::int AS joueurs, count(DISTINCT grp)::int AS groupes FROM league_members WHERE week = date_trunc('week', now() AT TIME ZONE 'UTC')::date GROUP BY tier ORDER BY tier`),
     q(clientDb, `SELECT game, count(*)::int AS parties, count(DISTINCT user_id)::int AS joueurs, round(avg(score::numeric * 100 / NULLIF(total, 0)))::int AS reussite
       FROM game_sessions WHERE created_at > now() - interval '30 days' GROUP BY 1`),
   ]);
-  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels, khatmas, defi });
+  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels, khatmas, defi, ligues });
 });
 app.put('/api/games/settings', async (c) => {
   const b = await c.req.json();
@@ -531,13 +532,16 @@ app.put('/api/games/settings', async (c) => {
   const khatma = { enabled: kb.enabled !== false, days: dayList.length ? dayList : [3, 7, 14], bonus: int(kb.bonus, 50, 1000), pct: Math.max(50, int(kb.pct, 80, 100)) };
   const df = b.defi || {};
   const defi = { enabled: df.enabled !== false, questions: Math.max(3, int(df.questions, 5, 10)), per_good: int(df.per_good, 5, 100), streak_step: int(df.streak_step, 2, 50), streak_max: int(df.streak_max, 20, 500) };
+  const lg = b.ligue || {};
+  const ligue = { enabled: lg.enabled !== false, size: Math.max(10, int(lg.size, 30, 50)), up: Math.max(1, int(lg.up, 7, 20)), down: int(lg.down, 5, 20), learn_day: int(lg.learn_day, 20, 200),
+    start: /^\d{4}-\d{2}-\d{2}$/.test(String(lg.start || '')) ? lg.start : '2026-11-02' };
   const who = c.get('admin').email;
-  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma, defi })) {
+  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma, defi, ligue })) {
     await clientDb.query(`INSERT INTO game_settings(key, value, updated_at, updated_by) VALUES ($1,$2,now(),$3)
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by=EXCLUDED.updated_by`, [key, value, who]);
   }
-  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma, defi });
-  return c.json({ games, robot, rules, duel, khatma, defi });
+  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma, defi, ligue });
+  return c.json({ games, robot, rules, duel, khatma, defi, ligue });
 });
 
 // ---------- rappels et notifications ----------

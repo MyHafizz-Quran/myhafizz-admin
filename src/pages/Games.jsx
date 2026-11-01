@@ -251,6 +251,19 @@ function Settings() {
         </div>
       </Card>
       <Card className="col-span-2">
+        <CardHead title="Ligues de la semaine" sub={`Du lundi au dimanche (UTC). Cette semaine : ${(data.ligues || []).map((l) => `${['Bronze', 'Argent', 'Or', 'Émeraude', 'Saphir', 'Diamant'][l.tier - 1]} ${num(l.joueurs)} joueurs (${num(l.groupes)} groupes)`).join(' · ') || 'aucun joueur classé pour l\'instant'}.`} />
+        <div className="px-4 pb-4 grid grid-cols-6 gap-4 items-end">
+          <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
+            <input type="checkbox" className="w-5 h-5 accent-[#00A3A8]" disabled={!write} checked={s.ligue?.enabled !== false} onChange={(e) => setS({ ...s, ligue: { ...s.ligue, enabled: e.target.checked } })} />
+            <span className="font-extrabold">Ligues activées</span>
+          </label>
+          <div><Label hint="lundi de départ">Début</Label><Input type="date" className="w-full" disabled={!write} value={s.ligue?.start ?? '2026-11-02'} onChange={(e) => setS({ ...s, ligue: { ...s.ligue, start: e.target.value } })} /></div>
+          {[['size', 'Taille des groupes', 'joueurs', 30], ['up', 'Montées', 'max par groupe', 7], ['down', 'Descentes', 'max par groupe', 5], ['learn_day', "Jour d'apprentissage", 'points', 20]].map(([k, label, hint, d]) => (
+            <div key={k}><Label hint={hint}>{label}</Label><Input type="number" min="0" className="w-full" disabled={!write} value={s.ligue?.[k] ?? d} onChange={(e) => setS({ ...s, ligue: { ...s.ligue, [k]: e.target.value } })} /></div>
+          ))}
+        </div>
+      </Card>
+      <Card className="col-span-2">
         <CardHead title="Règles" sub="Nombre de questions, déblocage des niveaux, points et chrono." />
         <div className="px-4 pb-4 grid grid-cols-4 gap-4">
           {R({ k: "questions", label: "Questions par partie", hint: "3 à 20", min: "3", max: "20" })}
