@@ -698,4 +698,170 @@ app.get('/api/system', async (c) => {
 
 app.all('/api/*', () => { throw fail(404, 'Route inconnue.'); });
 
+// ---------- Données (courbes et analyses) ----------
+const dsel = (c) => int(c.req.query('days'), 30, 365);
+
+app.get('/api/data/overview', async (c) => {
+  const days = dsel(c);
+  const [r] = await q(clientDb, `
+    WITH cur AS (SELECT current_date - ($1::int - 1) AS a, current_date AS b),
+         prev AS (SELECT current_date - (2 * $1::int - 1) AS a, current_date - $1::int AS b)
+    SELECT
+      (SELECT count(DISTINCT user_id) FROM activity_days WHERE day = current_date)::int AS active_today,
+      (SELECT count(DISTINCT user_id) FROM activity_days WHERE day = current_date - 7)::int AS active_today_prev,
+      (SELECT count(*) FROM neon_auth."user", cur WHERE "createdAt"::date BETWEEN cur.a AND cur.b)::int AS signups,
+      (SELECT count(*) FROM neon_auth."user", prev WHERE "createdAt"::date BETWEEN prev.a AND prev.b)::int AS signups_prev,
+      (SELECT count(DISTINCT user_id) FROM activity_days, cur WHERE day BETWEEN cur.a AND cur.b)::int AS active,
+      (SELECT count(DISTINCT user_id) FROM activity_days, prev WHERE day BETWEEN prev.a AND prev.b)::int AS active_prev,
+      (SELECT round(avg(n), 1) FROM (SELECT count(*) n FROM activity_days, cur WHERE day BETWEEN cur.a AND cur.b GROUP BY user_id) x) AS days_per_user,
+      (SELECT round(avg(n), 1) FROM (SELECT count(*) n FROM activity_days, prev WHERE day BETWEEN prev.a AND prev.b GROUP BY user_id) x) AS days_per_user_prev`, [days]);
+  // Rétention J7 : inscrits il y a 8 à 37 jours, revenus entre J7 et J13
+  const ret = async (from, to) => (await q(clientDb, `
+    SELECT CASE WHEN count(*) = 0 THEN NULL ELSE round(100.0 * count(*) FILTER (WHERE EXISTS (
+      SELECT 1 FROM activity_days a WHERE a.user_id = u.id AND a.day BETWEEN u."createdAt"::date + 7 AND u."createdAt"::date + 13)) / count(*)) END AS r
+    FROM neon_auth."user" u WHERE u."createdAt"::date BETWEEN current_date - $1::int AND current_date - $2::int`, [from, to]))[0].r;
+  r.retention_d7 = await ret(37, 14); r.retention_d7_prev = await ret(67, 38);
+  const spark = await q(clientDb, `
+    WITH d AS (SELECT generate_series(current_date - 13, current_date, interval '1 day')::date AS day)
+    SELECT (SELECT count(DISTINCT user_id) FROM activity_days a WHERE a.day = d.day)::int AS active,
+           (SELECT count(*) FROM neon_auth."user" u WHERE u."createdAt"::date = d.day)::int AS signups
+    FROM d ORDER BY d.day`);
+  r.spark = spark;
+  return c.json(r);
+});
+
+app.get('/api/data/active', async (c) => {
+  const days = dsel(c);
+  return c.json(await q(clientDb, `
+    WITH d AS (SELECT generate_series(current_date - ($1::int - 1), current_date, interval '1 day')::date AS day)
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+      (SELECT count(DISTINCT user_id) FROM activity_days a WHERE a.day = d.day)::int AS dau,
+      (SELECT count(DISTINCT user_id) FROM activity_days a WHERE a.day BETWEEN d.day - 6 AND d.day)::int AS wau,
+      (SELECT count(DISTINCT user_id) FROM activity_days a WHERE a.day BETWEEN d.day - 29 AND d.day)::int AS mau
+    FROM d ORDER BY d.day`, [days]));
+});
+
+app.get('/api/data/retention', async (c) => {
+  const cohorts = await q(clientDb, `
+    WITH u AS (SELECT id, date_trunc('week', "createdAt")::date AS w, "createdAt"::date AS d0 FROM neon_auth."user"
+               WHERE "createdAt" > now() - interval '8 weeks'),
+         x AS (SELECT u.w, k, count(DISTINCT u.id) AS sz,
+                 CASE WHEN u.w + k * 7 > current_date THEN NULL ELSE round(100.0 * count(DISTINCT a.user_id) / count(DISTINCT u.id)) END AS pct
+               FROM u CROSS JOIN generate_series(0, 6) k
+               LEFT JOIN activity_days a ON a.user_id = u.id AND a.day BETWEEN u.d0 + k * 7 AND u.d0 + k * 7 + 6
+               GROUP BY u.w, k)
+    SELECT to_char(w, 'YYYY-MM-DD') AS week, max(sz)::int AS size, array_agg(pct ORDER BY k) AS weeks FROM x GROUP BY w ORDER BY w`);
+  const curve = async (from, to) => (await q(clientDb, `
+    WITH u AS (SELECT id, "createdAt"::date AS d0 FROM neon_auth."user" WHERE "createdAt"::date BETWEEN current_date - $1::int AND current_date - $2::int)
+    SELECT k, CASE WHEN (SELECT count(*) FROM u WHERE d0 + k <= current_date) = 0 THEN NULL ELSE
+      round(100.0 * (SELECT count(*) FROM u WHERE d0 + k <= current_date AND EXISTS (SELECT 1 FROM activity_days a WHERE a.user_id = u.id AND a.day >= u.d0 + k))
+        / (SELECT count(*) FROM u WHERE d0 + k <= current_date)) END AS pct
+    FROM unnest(array[0, 1, 3, 7, 14, 30]) k`, [from, to]));
+  return c.json({ cohorts, curve: await curve(29, 0), curve_prev: await curve(59, 30) });
+});
+
+app.get('/api/data/funnel', async (c) => {
+  const days = dsel(c);
+  const [r] = await q(clientDb, `
+    WITH u AS (SELECT id, "emailVerified", "createdAt"::date AS d0 FROM neon_auth."user" WHERE "createdAt"::date > current_date - $1::int)
+    SELECT count(*)::int AS signups,
+      count(*) FILTER (WHERE "emailVerified")::int AS verified,
+      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM profiles p WHERE p.id = u.id AND p.onboarded_at IS NOT NULL))::int AS onboarded,
+      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM activity_days a WHERE a.user_id = u.id AND a.actions > 0))::int AS first_session,
+      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM activity_days a WHERE a.user_id = u.id AND a.day >= u.d0 + 7))::int AS returned_d7,
+      count(*) FILTER (WHERE u.d0 <= current_date - 7)::int AS eligible_d7
+    FROM u`, [days]);
+  return c.json(r);
+});
+
+app.get('/api/data/learning', async (c) => {
+  const days = dsel(c);
+  const rows = await q(clientDb, `
+    WITH d AS (SELECT generate_series(current_date - ($1::int - 1), current_date, interval '1 day')::date AS day)
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+      (SELECT count(*) FROM verse_reviews v WHERE v.created_at::date <= d.day)::int AS memorized,
+      (SELECT count(*) FROM verse_reviews v WHERE v.last_reviewed::date = d.day)::int AS reviewed,
+      (SELECT count(*) FROM verse_reviews v WHERE v.due_date = d.day)::int AS due
+    FROM d ORDER BY d.day`, [days]);
+  const [str] = await q(clientDb, `
+    SELECT count(*) FILTER (WHERE interval_days >= 21)::int AS solid, count(*) FILTER (WHERE interval_days BETWEEN 4 AND 20)::int AS medium,
+           count(*) FILTER (WHERE interval_days < 4)::int AS weak FROM verse_reviews`);
+  return c.json({ rows, strength: str });
+});
+
+app.get('/api/data/courses', async (c) => {
+  const track = c.req.query('track') || 'arabe';
+  let rows;
+  if (track === 'tajwid') rows = await q(clientDb, `
+    SELECT unit::int AS unit, count(DISTINCT user_id)::int AS reached, count(DISTINCT user_id) FILTER (WHERE passed)::int AS passed
+    FROM tajwid_progress GROUP BY unit ORDER BY unit`);
+  else if (track === 'tafsir') rows = await q(clientDb, `
+    SELECT surah AS unit, count(DISTINCT user_id)::int AS reached, count(*)::int AS passed FROM tafsir_progress GROUP BY surah ORDER BY surah`);
+  else rows = await q(clientDb, `
+    SELECT substring(lesson_id from 'u(\\d+)')::int AS unit, count(DISTINCT user_id)::int AS reached,
+           count(DISTINCT user_id) FILTER (WHERE completed_at IS NOT NULL)::int AS passed
+    FROM reading_lessons WHERE lesson_id ~ '^u\\d+' GROUP BY 1 ORDER BY 1`);
+  return c.json(rows);
+});
+
+app.get('/api/data/games', async (c) => {
+  const days = dsel(c);
+  const byGame = await q(clientDb, `
+    SELECT game, count(*)::int AS plays, count(DISTINCT user_id)::int AS players,
+      CASE WHEN sum(total) > 0 THEN round(100.0 * sum(score) / sum(total)) END AS accuracy
+    FROM game_sessions WHERE created_at > now() - make_interval(days => $1) GROUP BY game ORDER BY plays DESC`, [days]);
+  const byCat = await q(clientDb, `
+    SELECT category, sum(plays)::int AS plays, CASE WHEN sum(plays) > 0 THEN round(100.0 * sum(correct) / sum(plays)) END AS accuracy
+    FROM game_questions WHERE status = 'published' GROUP BY category ORDER BY category`);
+  const missed = await q(clientDb, `
+    SELECT id, category, left(question, 120) AS question, plays, round(100.0 * (plays - correct) / plays) AS error_rate
+    FROM game_questions WHERE status = 'published' AND plays >= 5 ORDER BY (plays - correct)::float / plays DESC, plays DESC LIMIT 10`);
+  const duels = await q(clientDb, `
+    WITH d AS (SELECT generate_series(current_date - ($1::int - 1), current_date, interval '1 day')::date AS day)
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+      (SELECT count(*) FROM game_sessions g WHERE g.created_at::date = d.day)::int AS solo,
+      (SELECT count(*) FROM live_duels l WHERE l.finished_at::date = d.day)::int AS duels,
+      (SELECT count(*) FROM daily_results r WHERE r.day = d.day AND r.finished_at IS NOT NULL)::int AS defi
+    FROM d ORDER BY d.day`, [days]);
+  return c.json({ byGame, byCat, missed, series: duels });
+});
+
+app.get('/api/data/notifs', async (c) => {
+  const days = dsel(c);
+  const byKind = await q(clientDb, `
+    SELECT kind, sum(sent)::int AS sent, sum(opened)::int AS opened FROM notif_stats
+    WHERE day > current_date - $1::int GROUP BY kind ORDER BY sum(sent) DESC`, [days]);
+  const series = await q(clientDb, `
+    WITH d AS (SELECT generate_series(current_date - ($1::int - 1), current_date, interval '1 day')::date AS day)
+    SELECT to_char(d.day, 'YYYY-MM-DD') AS day, coalesce(sum(s.sent), 0)::int AS sent, coalesce(sum(s.opened), 0)::int AS opened
+    FROM d LEFT JOIN notif_stats s ON s.day = d.day GROUP BY d.day ORDER BY d.day`, [days]);
+  const [subs] = await q(clientDb, `SELECT count(*)::int AS subs, count(fcm_token)::int AS fcm FROM prayer_reminders`);
+  return c.json({ byKind, series, ...subs });
+});
+
+app.get('/api/data/hours', async (c) => {
+  const days = dsel(c);
+  // Heure de chaque action horodatée (révisions, jeux, lecture), à l'heure GMT (Côte d'Ivoire, Sénégal, Mali)
+  return c.json(await q(clientDb, `
+    WITH t AS (
+      SELECT last_reviewed AS ts FROM verse_reviews WHERE last_reviewed > now() - make_interval(days => $1)
+      UNION ALL SELECT created_at FROM game_sessions WHERE created_at > now() - make_interval(days => $1)
+      UNION ALL SELECT created_at FROM reading_sessions WHERE created_at > now() - make_interval(days => $1)
+      UNION ALL SELECT done_at FROM tafsir_progress WHERE done_at > now() - make_interval(days => $1))
+    SELECT h, (SELECT count(*) FROM t WHERE extract(hour FROM ts AT TIME ZONE 'UTC') = h)::int AS n FROM generate_series(0, 23) h ORDER BY h`, [days]));
+});
+
+app.get('/api/data/live', async (c) => {
+  const [r] = await q(clientDb, `
+    SELECT (SELECT count(*) FROM player_presence WHERE seen_at > now() - interval '90 seconds')::int AS online,
+           (SELECT count(*) FROM player_presence WHERE seen_at > now() - interval '15 minutes')::int AS online_15m,
+           (SELECT count(*) FROM live_duels WHERE status = 'playing')::int AS duels_playing,
+           (SELECT count(*) FROM live_duels WHERE status = 'invited')::int AS duels_invited,
+           (SELECT count(DISTINCT user_id) FROM activity_days WHERE day = current_date)::int AS active_today`);
+  r.recent = await q(clientDb, `
+    SELECT p.user_id, pr.username, pr.full_name, pr.avatar_url, p.seen_at FROM player_presence p
+    LEFT JOIN profiles pr ON pr.id = p.user_id WHERE p.seen_at > now() - interval '15 minutes' ORDER BY p.seen_at DESC LIMIT 20`);
+  return c.json(r);
+});
+
 export default app;

@@ -25,7 +25,7 @@ function Questions() {
   const write = canWrite(useMe());
   const toast = useToast();
   const [f, setF] = useState({ category: '', difficulty: '', status: '', search: '', page: 1 });
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => new URLSearchParams(location.search).get('q') || '');
   useEffect(() => { const t = setTimeout(() => setF((x) => ({ ...x, search, page: 1 })), 300); return () => clearTimeout(t); }, [search]);
   const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== '')).toString();
   const { data, error, reload } = useApi(() => api(`/games/questions?${qs}`), [qs]);

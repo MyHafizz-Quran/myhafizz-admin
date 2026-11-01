@@ -2,7 +2,7 @@ import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { MeCtx } from './me';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { ChartBar, Users, UsersThree, Trophy, GameController, Books, Bell, ShieldCheck, ClockCounterClockwise, Database, SignOut, List, X } from '@phosphor-icons/react';
+import { ChartBar, Users, UsersThree, Trophy, GameController, Books, Bell, ShieldCheck, ClockCounterClockwise, Database, SignOut, List, X, ChartLineUp } from '@phosphor-icons/react';
 import './index.css';
 import { api, auth, clearToken, ROLE_LABEL, ApiError } from './lib';
 import { Button, Loading, ToastProvider, cx } from './ui';
@@ -19,10 +19,12 @@ import Team from './pages/Team';
 import Audit from './pages/Audit';
 import System from './pages/System';
 import Contenus from './pages/Contenus';
+import Data from './pages/Data';
 
 
 const NAV = [
   { to: '/', label: 'Tableau de bord', icon: ChartBar, end: true },
+  { to: '/donnees', label: 'Données', icon: ChartLineUp },
   { to: '/utilisateurs', label: 'Utilisateurs', icon: Users },
   { to: '/groupes', label: 'Groupes', icon: UsersThree },
   { to: '/defis', label: 'Défis', icon: Trophy },
@@ -82,6 +84,7 @@ function Shell({ me, onSignOut }) {
             <Route path="/defis" element={<Challenges />} />
             <Route path="/jeux" element={<Games />} />
             <Route path="/contenus" element={<Contenus />} />
+            <Route path="/donnees" element={<Data />} />
             <Route path="/rappels" element={<Notifications />} />
             <Route path="/equipe" element={<Team />} />
             <Route path="/journal" element={<Audit />} />
