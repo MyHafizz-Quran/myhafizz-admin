@@ -226,6 +226,18 @@ function Settings() {
         </div>
       </Card>
       <Card className="col-span-2">
+        <CardHead title="Khatma d'équipe" sub={`Jeu coopératif dans les groupes et binômes. 30 derniers jours : ${num(data.khatmas?.total || 0)} khatmas, ${num(data.khatmas?.terminees || 0)} terminées, ${num(data.khatmas?.en_cours || 0)} en cours, ${num(data.khatmas?.groupes || 0)} groupes.`} />
+        <div className="px-4 pb-4 grid grid-cols-4 gap-4 items-end">
+          <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
+            <input type="checkbox" className="w-5 h-5 accent-[#00A3A8]" disabled={!write} checked={s.khatma?.enabled !== false} onChange={(e) => setS({ ...s, khatma: { ...s.khatma, enabled: e.target.checked } })} />
+            <span className="font-extrabold">Khatma d'équipe activée</span>
+          </label>
+          <div><Label hint="jours, séparés par des virgules">Durées proposées</Label><Input className="w-full" disabled={!write} value={Array.isArray(s.khatma?.days) ? s.khatma.days.join(', ') : s.khatma?.days ?? '3, 7, 14'} onChange={(e) => setS({ ...s, khatma: { ...s.khatma, days: e.target.value } })} /></div>
+          <div><Label hint="points pour chaque membre">Bonus de fin</Label><Input type="number" min="0" className="w-full" disabled={!write} value={s.khatma?.bonus ?? 50} onChange={(e) => setS({ ...s, khatma: { ...s.khatma, bonus: e.target.value } })} /></div>
+          <div><Label hint="% pour valider une sourate">Seuil de validation</Label><Input type="number" min="50" max="100" className="w-full" disabled={!write} value={s.khatma?.pct ?? 80} onChange={(e) => setS({ ...s, khatma: { ...s.khatma, pct: e.target.value } })} /></div>
+        </div>
+      </Card>
+      <Card className="col-span-2">
         <CardHead title="Règles" sub="Nombre de questions, déblocage des niveaux, points et chrono." />
         <div className="px-4 pb-4 grid grid-cols-4 gap-4">
           {R({ k: "questions", label: "Questions par partie", hint: "3 à 20", min: "3", max: "20" })}

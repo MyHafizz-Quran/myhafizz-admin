@@ -497,15 +497,17 @@ app.post('/api/games/questions/import', async (c) => {
 });
 const GAME_KEYS = ['suite', 'sourate', 'ordre', 'lettres', 'ilm'];
 app.get('/api/games/settings', async (c) => {
-  const [rows, plays, duels] = await Promise.all([
+  const [rows, plays, duels, khatmas] = await Promise.all([
     q(clientDb, 'SELECT key, value, updated_at, updated_by FROM game_settings'),
     one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS termines,
       count(*) FILTER (WHERE status = 'pending' AND expires_at > now())::int AS en_cours,
       count(DISTINCT u)::int AS joueurs FROM game_duels, LATERAL unnest(ARRAY[challenger, opponent]) u WHERE created_at > now() - interval '30 days'`),
+    one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS terminees, count(*) FILTER (WHERE status = 'active')::int AS en_cours,
+      count(DISTINCT group_id)::int AS groupes FROM team_khatmas WHERE created_at > now() - interval '30 days'`),
     q(clientDb, `SELECT game, count(*)::int AS parties, count(DISTINCT user_id)::int AS joueurs, round(avg(score::numeric * 100 / NULLIF(total, 0)))::int AS reussite
       FROM game_sessions WHERE created_at > now() - interval '30 days' GROUP BY 1`),
   ]);
-  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels });
+  return c.json({ settings: Object.fromEntries(rows.map((r) => [r.key, r.value])), updated: rows, plays, duels, khatmas });
 });
 app.put('/api/games/settings', async (c) => {
   const b = await c.req.json();
@@ -520,13 +522,16 @@ app.put('/api/games/settings', async (c) => {
   };
   const d = b.duel || {};
   const duel = { enabled: d.enabled !== false, hours: Math.max(1, int(d.hours, 24, 168)), win_bonus: int(d.win_bonus, 20, 500), daily_limit: Math.max(1, int(d.daily_limit, 10, 100)) };
+  const kb = b.khatma || {};
+  const dayList = [...new Set((Array.isArray(kb.days) ? kb.days : String(kb.days || '').split(/[\s,;]+/)).map((x) => int(x, 0, 30)).filter((x) => x >= 1))].sort((a, b) => a - b).slice(0, 4);
+  const khatma = { enabled: kb.enabled !== false, days: dayList.length ? dayList : [3, 7, 14], bonus: int(kb.bonus, 50, 1000), pct: Math.max(50, int(kb.pct, 80, 100)) };
   const who = c.get('admin').email;
-  for (const [key, value] of Object.entries({ games, robot, rules, duel })) {
+  for (const [key, value] of Object.entries({ games, robot, rules, duel, khatma })) {
     await clientDb.query(`INSERT INTO game_settings(key, value, updated_at, updated_by) VALUES ($1,$2,now(),$3)
       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by=EXCLUDED.updated_by`, [key, value, who]);
   }
-  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel });
-  return c.json({ games, robot, rules, duel });
+  await audit(c, 'games.settings', 'games', null, { games, robot, rules, duel, khatma });
+  return c.json({ games, robot, rules, duel, khatma });
 });
 
 // ---------- rappels et notifications ----------
