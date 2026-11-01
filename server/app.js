@@ -698,6 +698,84 @@ app.get('/api/system', async (c) => {
 
 app.all('/api/*', () => { throw fail(404, 'Route inconnue.'); });
 
+// ---------- Parcours : Tajwid, ligues, Défi du jour ----------
+const STAT = new Set(['review', 'published', 'hidden']);
+app.get('/api/tajwid', async (c) => {
+  const [units, verses, rules] = await Promise.all([
+    q(clientDb, 'SELECT * FROM tajwid_units ORDER BY n'),
+    q(clientDb, 'SELECT * FROM tajwid_verses ORDER BY n'),
+    q(clientDb, `SELECT r.*, (SELECT count(*) FROM tajwid_examples e WHERE e.rule = r.id)::int AS examples FROM tajwid_rules r ORDER BY unit, ord`),
+  ]);
+  const stats = await q(clientDb, `SELECT unit, count(*)::int AS players, count(*) FILTER (WHERE passed)::int AS passed, sum(plays)::int AS plays FROM tajwid_progress GROUP BY unit`);
+  return c.json({ units, verses, rules, stats });
+});
+app.put('/api/tajwid/units/:n', async (c) => {
+  const b = await c.req.json();
+  const row = await one(clientDb, 'UPDATE tajwid_units SET title=$2, title_ar=$3, sub=$4 WHERE n=$1 RETURNING *', [int(c.req.param('n'), -1), String(b.title || '').slice(0, 120), String(b.title_ar || '').slice(0, 120), String(b.sub || '').slice(0, 300)]);
+  if (!row) throw fail(404, 'Unité introuvable.');
+  await audit(c, 'tajwid.unit', 'tajwid_unit', String(row.n), { title: row.title });
+  return c.json(row);
+});
+app.put('/api/tajwid/verses/:n', async (c) => {
+  const b = await c.req.json();
+  if (!STAT.has(b.status)) throw fail(400, 'Statut invalide.');
+  const row = await one(clientDb, 'UPDATE tajwid_verses SET ar_a=$2, ar_b=$3, translit=$4, fr=$5, status=$6, updated_at=now() WHERE n=$1 RETURNING *',
+    [int(c.req.param('n'), -1), String(b.ar_a || ''), String(b.ar_b || ''), String(b.translit || ''), String(b.fr || ''), b.status]);
+  if (!row) throw fail(404, 'Vers introuvable.');
+  await audit(c, 'tajwid.verse', 'tajwid_verse', String(row.n), { status: row.status });
+  return c.json(row);
+});
+app.put('/api/tajwid/rules/:id', async (c) => {
+  const b = await c.req.json();
+  if (!STAT.has(b.status)) throw fail(400, 'Statut invalide.');
+  const row = await one(clientDb, 'UPDATE tajwid_rules SET name=$2, name_ar=$3, label=$4, letters=$5, body=$6, status=$7, updated_at=now() WHERE id=$1 RETURNING *',
+    [c.req.param('id'), String(b.name || ''), String(b.name_ar || ''), String(b.label || ''), String(b.letters || ''), String(b.body || ''), b.status]);
+  if (!row) throw fail(404, 'Règle introuvable.');
+  await audit(c, 'tajwid.rule', 'tajwid_rule', String(row.id), { name: row.name, status: row.status });
+  return c.json(row);
+});
+app.get('/api/tajwid/rules/:id/examples', async (c) =>
+  c.json(await q(clientDb, 'SELECT id, surah, ayah, txt, words, nwords, ord FROM tajwid_examples WHERE rule = $1 ORDER BY ord, id', [c.req.param('id')])));
+app.delete('/api/tajwid/examples/:id', async (c) => {
+  const row = await one(clientDb, 'DELETE FROM tajwid_examples WHERE id = $1 RETURNING id, rule, surah, ayah', [int(c.req.param('id'), -1)]);
+  if (!row) throw fail(404, 'Exemple introuvable.');
+  await audit(c, 'tajwid.example.delete', 'tajwid_example', String(row.id), row);
+  return c.json({ ok: true });
+});
+
+app.get('/api/leagues', async (c) => {
+  const [w] = await q(clientDb, 'SELECT max(week) AS week FROM league_members');
+  const week = c.req.query('week') || w?.week;
+  const weeks = await q(clientDb, `SELECT to_char(week, 'YYYY-MM-DD') AS week, (SELECT closed_at FROM league_weeks lw WHERE lw.week = m.week) AS closed_at, count(*)::int AS players
+    FROM league_members m GROUP BY week ORDER BY week DESC LIMIT 12`);
+  const members = week ? await q(clientDb, `SELECT m.tier, m.grp, m.points, m.pos, m.result, m.user_id, p.username, p.full_name
+    FROM league_members m LEFT JOIN profiles p ON p.id = m.user_id WHERE m.week = $1 ORDER BY m.tier DESC, m.grp, m.points DESC`, [week]) : [];
+  const tiers = await q(clientDb, 'SELECT tier, count(*)::int AS n FROM league_players GROUP BY tier ORDER BY tier');
+  return c.json({ week, weeks, members, tiers });
+});
+
+app.get('/api/defi', async (c) => {
+  const days = int(c.req.query('days'), 30, 180);
+  const rows = await q(clientDb, `
+    SELECT to_char(dc.day, 'YYYY-MM-DD') AS day, jsonb_array_length(dc.items) AS questions,
+      (SELECT count(*) FROM daily_results r WHERE r.day = dc.day AND r.finished_at IS NOT NULL)::int AS players,
+      (SELECT round(avg(r.score)::numeric, 1) FROM daily_results r WHERE r.day = dc.day AND r.finished_at IS NOT NULL) AS avg_score,
+      (SELECT round(avg(r.ms) / 1000.0) FROM daily_results r WHERE r.day = dc.day AND r.finished_at IS NOT NULL) AS avg_secs,
+      (SELECT jsonb_agg(x.v->>'key' ORDER BY x.i) FROM jsonb_array_elements(dc.items) WITH ORDINALITY x(v, i)) AS keys
+    FROM daily_challenges dc WHERE dc.day > current_date - $1::int ORDER BY dc.day DESC`, [days]);
+  return c.json(rows);
+});
+app.get('/api/defi/:day', async (c) => {
+  const day = c.req.param('day');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw fail(400, 'Date invalide.');
+  const [dc] = await q(clientDb, 'SELECT items FROM daily_challenges WHERE day = $1', [day]);
+  const results = await q(clientDb, `SELECT r.score, r.total, r.ms, r.points, r.answers, p.username, p.full_name, r.user_id
+    FROM daily_results r LEFT JOIN profiles p ON p.id = r.user_id WHERE r.day = $1 AND r.finished_at IS NOT NULL ORDER BY r.score DESC, r.ms`, [day]);
+  const items = (dc?.items || []).map((it, i) => ({ key: it.key, game: it.game, q: it.q || it.question || it.cur?.f || it.key,
+    ok: results.filter((r) => r.answers?.[i]?.ok).length, n: results.filter((r) => r.answers?.[i]).length }));
+  return c.json({ items, results: results.map(({ answers, ...r }) => r) });
+});
+
 // ---------- Données (courbes et analyses) ----------
 const dsel = (c) => int(c.req.query('days'), 30, 365);
 
