@@ -398,7 +398,7 @@ app.delete('/api/challenges/:id', async (c) => {
 });
 
 // ---------- jeux : banque de questions Al-Ilm et réglages (lus par l'app client) ----------
-const GQ_CATS = ['sira', 'prophetes', 'coran', 'compagnons', 'histoire', 'croyance', 'pratique', 'hadith', 'calendrier', 'hadith_vf'];
+const GQ_CATS = ['sira', 'prophetes', 'coran', 'compagnons', 'histoire', 'croyance', 'pratique', 'hadith', 'calendrier', 'hadith_vf', 'tafsir'];
 const GQ_STATUS = ['draft', 'review', 'published', 'disabled'];
 function questionInput(b) {
   const category = String(b.category || '');
@@ -410,7 +410,9 @@ function questionInput(b) {
   if (!question) throw fail(400, 'Écris la question.');
   let choices = Array.isArray(b.choices) ? b.choices.map((x) => String(x || '').trim().slice(0, 200)) : [];
   if (type === 'vrai_faux') choices = b.category === 'hadith_vf' ? ['Hadith authentique', 'Pas un hadith'] : ['Vrai', 'Faux'];
-  if (type === 'qcm' && (choices.length !== 4 || choices.some((x) => !x))) throw fail(400, 'Remplis les 4 choix.');
+  if (category === 'tafsir') choices = choices.filter(Boolean);
+  if (type === 'qcm' && category === 'tafsir' && (choices.length < 3 || choices.length > 4)) throw fail(400, 'Mets 3 ou 4 choix.');
+  if (type === 'qcm' && category !== 'tafsir' && (choices.length !== 4 || choices.some((x) => !x))) throw fail(400, 'Remplis les 4 choix.');
   if (new Set(choices).size !== choices.length) throw fail(400, 'Deux choix sont identiques.');
   const answer = int(b.answer, -1, choices.length - 1);
   if (answer < 0) throw fail(400, 'Coche la bonne réponse.');
@@ -418,7 +420,12 @@ function questionInput(b) {
   const explanation = String(b.explanation || '').trim().slice(0, 1500);
   const source = String(b.source || '').trim().slice(0, 300);
   if (status === 'published' && (!explanation || !source)) throw fail(400, 'Une question publiée doit avoir une explication et une source.');
-  return [category, difficulty, type, question, JSON.stringify(choices), answer, explanation, source, String(b.note || '').trim().slice(0, 500), status];
+  let surah = null, ayah = null;
+  if (category === 'tafsir') {
+    surah = int(b.surah, 0, 114); ayah = int(b.ayah, 0, 286);
+    if (surah < 1 || ayah < 1) throw fail(400, 'Indique la sourate et le verset de la question.');
+  }
+  return [category, difficulty, type, question, JSON.stringify(choices), answer, explanation, source, String(b.note || '').trim().slice(0, 500), status, surah, ayah];
 }
 app.get('/api/games/questions', async (c) => {
   const { category, difficulty, status, search } = c.req.query();
@@ -441,8 +448,8 @@ app.post('/api/games/questions', async (c) => {
   const v = questionInput(b);
   const n = await one(clientDb, `SELECT count(*)::int + 1 AS n FROM game_questions WHERE category = $1`, [v[0]]);
   const id = `${v[0].slice(0, 4)}-${String(n.n).padStart(3, '0')}-${Date.now().toString(36).slice(-4)}`;
-  const row = await one(clientDb, `INSERT INTO game_questions(id, category, difficulty, type, question, choices, answer, explanation, source, note, status, updated_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`, [id, ...v, c.get('admin').email]);
+  const row = await one(clientDb, `INSERT INTO game_questions(id, category, difficulty, type, question, choices, answer, explanation, source, note, status, updated_by, surah, ayah)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`, [id, ...v.slice(0, 10), c.get('admin').email, v[10], v[11]]);
   await audit(c, 'question.create', 'question', id, { status: row.status });
   return c.json(row);
 });
@@ -450,7 +457,7 @@ app.put('/api/games/questions/:id', async (c) => {
   const id = c.req.param('id');
   const v = questionInput(await c.req.json());
   const row = await one(clientDb, `UPDATE game_questions SET category=$2, difficulty=$3, type=$4, question=$5, choices=$6, answer=$7, explanation=$8, source=$9, note=$10, status=$11,
-    updated_at=now(), updated_by=$12 WHERE id=$1 RETURNING *`, [id, ...v, c.get('admin').email]);
+    updated_at=now(), updated_by=$12, surah=$13, ayah=$14 WHERE id=$1 RETURNING *`, [id, ...v.slice(0, 10), c.get('admin').email, v[10], v[11]]);
   if (!row) throw fail(404, 'Question introuvable.');
   await audit(c, 'question.update', 'question', id, { status: row.status });
   return c.json(row);
@@ -472,7 +479,7 @@ app.delete('/api/games/questions/:id', async (c) => {
   return c.json({ ok: true });
 });
 app.get('/api/games/questions/export.json', async (c) => {
-  const rows = await q(clientDb, 'SELECT id, category, difficulty, type, question, choices, answer, explanation, source, note, status FROM game_questions ORDER BY id');
+  const rows = await q(clientDb, 'SELECT id, category, difficulty, type, question, choices, answer, explanation, source, note, status, surah, ayah FROM game_questions ORDER BY id');
   c.header('Content-Disposition', 'attachment; filename="myhafizz-questions.json"');
   return c.json(rows);
 });
@@ -485,10 +492,10 @@ app.post('/api/games/questions/import', async (c) => {
     try {
       const v = questionInput({ status: 'review', ...b });
       const id = String(b.id || '').trim().slice(0, 40) || `imp-${Date.now().toString(36)}-${k}`;
-      await clientDb.query(`INSERT INTO game_questions(id, category, difficulty, type, question, choices, answer, explanation, source, note, status, updated_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO UPDATE SET category=EXCLUDED.category, difficulty=EXCLUDED.difficulty, type=EXCLUDED.type,
+      await clientDb.query(`INSERT INTO game_questions(id, category, difficulty, type, question, choices, answer, explanation, source, note, status, updated_by, surah, ayah)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (id) DO UPDATE SET category=EXCLUDED.category, difficulty=EXCLUDED.difficulty, type=EXCLUDED.type,
         question=EXCLUDED.question, choices=EXCLUDED.choices, answer=EXCLUDED.answer, explanation=EXCLUDED.explanation, source=EXCLUDED.source, note=EXCLUDED.note,
-        status=EXCLUDED.status, updated_at=now(), updated_by=EXCLUDED.updated_by`, [id, ...v, c.get('admin').email]);
+        status=EXCLUDED.status, updated_at=now(), updated_by=EXCLUDED.updated_by, surah=EXCLUDED.surah, ayah=EXCLUDED.ayah`, [id, ...v.slice(0, 10), c.get('admin').email, v[10], v[11]]);
       n++;
     } catch (e) { if (errors.length < 20) errors.push(`#${k + 1} : ${e.message}`); }
   }

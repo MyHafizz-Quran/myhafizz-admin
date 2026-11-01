@@ -4,7 +4,7 @@ import { useMe, canWrite } from '../me';
 import { api, date, num } from '../lib';
 import { Badge, Button, Card, CardHead, Empty, ErrorBox, Input, Label, Loading, Modal, PageHead, Pager, Segmented, Select, Table, Td, Textarea, useApi, useToast } from '../ui';
 
-export const CATS = { sira: 'Sira', prophetes: 'Prophètes', coran: 'Coran', compagnons: 'Compagnons', histoire: 'Histoire', croyance: 'Croyance', pratique: 'Pratique', hadith: 'Hadith', calendrier: 'Calendrier', hadith_vf: 'Hadith ou pas ?' };
+export const CATS = { sira: 'Sira', prophetes: 'Prophètes', coran: 'Coran', compagnons: 'Compagnons', histoire: 'Histoire', croyance: 'Croyance', pratique: 'Pratique', hadith: 'Hadith', calendrier: 'Calendrier', hadith_vf: 'Hadith ou pas ?' , tafsir: 'Tafsir'};
 const DIFF = { 1: 'Facile', 2: 'Moyen', 3: 'Difficile' };
 const STATUS = { draft: ['Brouillon', 'gray'], review: ['À vérifier', 'gold'], published: ['Publiée', 'lagon'], disabled: ['Désactivée', 'danger'] };
 const GAMES = { lettres: 'Lettres éclair', ilm: 'Al-Ilm', sourate: 'Quelle sourate ?', suite: 'La suite du verset', ordre: "Remets dans l'ordre", hadith: 'Hadith ou pas ?' };
@@ -15,7 +15,7 @@ export default function Games() {
   return (
     <>
       <PageHead title="Jeux" sub="Questions et réglages appliqués à tous les joueurs, sans mise à jour de l'app."
-        right={<Segmented value={tab} onChange={setTab} options={[{ value: 'questions', label: 'Questions Al-Ilm' }, { value: 'tournois', label: 'Tournois' }, { value: 'settings', label: 'Réglages des jeux' }]} />} />
+        right={<Segmented value={tab} onChange={setTab} options={[{ value: 'questions', label: 'Questions' }, { value: 'tournois', label: 'Tournois' }, { value: 'settings', label: 'Réglages des jeux' }]} />} />
       {tab === 'questions' ? <Questions /> : tab === 'tournois' ? <Tournaments /> : <Settings />}
     </>
   );
@@ -127,7 +127,7 @@ function Questions() {
 
 function QuestionForm({ edit, setEdit }) {
   const set = (k) => (e) => setEdit({ ...edit, [k]: e.target.value });
-  const choices = edit.type === 'vrai_faux' ? (edit.category === 'hadith_vf' ? ['Hadith authentique', 'Pas un hadith'] : ['Vrai', 'Faux']) : edit.choices.length === 4 ? edit.choices : ['', '', '', ''];
+  const choices = edit.type === 'vrai_faux' ? (edit.category === 'hadith_vf' ? ['Hadith authentique', 'Pas un hadith'] : ['Vrai', 'Faux']) : edit.category === 'tafsir' ? [...edit.choices, '', '', '', ''].slice(0, 4) : edit.choices.length === 4 ? edit.choices : ['', '', '', ''];
   return (
     <div className="grid grid-cols-[1fr_300px] gap-6">
       <div className="space-y-4">
@@ -147,6 +147,13 @@ function QuestionForm({ edit, setEdit }) {
             </div>
           ))}</div>
         </div>
+        {edit.category === 'tafsir' && (
+          <div className="grid grid-cols-2 gap-4">
+            <div><Label hint="1 à 114">Sourate</Label><Input className="w-full" type="number" value={edit.surah ?? ''} onChange={set('surah')} /></div>
+            <div><Label hint="la question apparaît dans la leçon de ce verset">Verset</Label><Input className="w-full" type="number" value={edit.ayah ?? ''} onChange={set('ayah')} /></div>
+          </div>
+        )}
+        {edit.category === 'tafsir' && <p className="text-[12px] font-semibold text-ink-soft -mt-2">Tafsir : 3 ou 4 choix (laisse le 4e vide si besoin). La réponse et l'explication doivent venir du texte du tafsir cité.</p>}
         <div><Label hint="obligatoire pour publier">Explication montrée après la réponse</Label><Textarea rows={3} value={edit.explanation} onChange={set('explanation')} /></div>
         <div className="grid grid-cols-2 gap-4">
           <div><Label hint="obligatoire pour publier">Source</Label><Input className="w-full" value={edit.source} onChange={set('source')} placeholder="Ar-Rahiq al-Makhtum" /></div>
@@ -157,7 +164,7 @@ function QuestionForm({ edit, setEdit }) {
       <div>
         <Label>Aperçu mobile</Label>
         <div className="rounded-[28px] border-2 border-line bg-[#EFF9F9] p-4 text-[13px]">
-          <div className="text-[11px] font-extrabold text-ink-soft">{edit.category === 'hadith_vf' ? 'Hadith ou pas ?' : `Al-Ilm · ${CATS[edit.category]}`}</div>
+          <div className="text-[11px] font-extrabold text-ink-soft">{edit.category === 'hadith_vf' ? 'Hadith ou pas ?' : edit.category === 'tafsir' ? `Tafsir · ${edit.surah || '?'}:${edit.ayah || '?'}` : `Al-Ilm · ${CATS[edit.category]}`}</div>
           <div className="font-black text-[15px] text-ink mt-1 mb-3 leading-snug">{edit.question || 'La question apparaîtra ici'}</div>
           <div className="space-y-2">{choices.map((ch, k) => (
             <div key={k} className={`rounded-xl border-2 border-b-4 px-2.5 py-2 font-extrabold flex gap-2 ${edit.answer === k ? 'border-lagon bg-lagon-tint text-lagon-text' : 'border-line bg-white'}`}><span>{edit.type === 'vrai_faux' ? (k ? 'F' : 'V') : 'ABCD'[k]}</span>{ch || '…'}</div>
