@@ -500,8 +500,8 @@ app.get('/api/games/settings', async (c) => {
   const [rows, plays, duels, khatmas] = await Promise.all([
     q(clientDb, 'SELECT key, value, updated_at, updated_by FROM game_settings'),
     one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS termines,
-      count(*) FILTER (WHERE status = 'pending' AND expires_at > now())::int AS en_cours,
-      count(DISTINCT u)::int AS joueurs FROM game_duels, LATERAL unnest(ARRAY[challenger, opponent]) u WHERE created_at > now() - interval '30 days'`),
+      count(*) FILTER (WHERE status = 'done' AND quit_by IS NOT NULL)::int AS abandons, count(*) FILTER (WHERE status IN ('declined','expired'))::int AS refuses,
+      count(DISTINCT u)::int AS joueurs FROM live_duels, LATERAL unnest(ARRAY[challenger, opponent]) u WHERE created_at > now() - interval '30 days'`),
     one(clientDb, `SELECT count(*)::int AS total, count(*) FILTER (WHERE status = 'done')::int AS terminees, count(*) FILTER (WHERE status = 'active')::int AS en_cours,
       count(DISTINCT group_id)::int AS groupes FROM team_khatmas WHERE created_at > now() - interval '30 days'`),
     q(clientDb, `SELECT game, count(*)::int AS parties, count(DISTINCT user_id)::int AS joueurs, round(avg(score::numeric * 100 / NULLIF(total, 0)))::int AS reussite
@@ -521,7 +521,8 @@ app.put('/api/games/settings', async (c) => {
     streak_bonus: rate(r.streak_bonus, 0.1), streak_max: Math.min(5, Math.max(1, Number(r.streak_max) || 2)), flash_seconds: Math.max(2, int(r.flash_seconds, 3, 15)),
   };
   const d = b.duel || {};
-  const duel = { enabled: d.enabled !== false, hours: Math.max(1, int(d.hours, 24, 168)), win_bonus: int(d.win_bonus, 20, 500), daily_limit: Math.max(1, int(d.daily_limit, 10, 100)) };
+  const duel = { enabled: d.enabled !== false, questions: Math.max(3, int(d.questions, 7, 15)), secs: Math.max(5, int(d.secs, 15, 60)), secs_ordre: Math.max(10, int(d.secs_ordre, 25, 90)),
+    invite_secs: Math.max(20, int(d.invite_secs, 60, 300)), win: int(d.win, 30, 500), draw: int(d.draw, 5, 500), loss: int(d.loss, 10, 500), quit: int(d.quit, 20, 500), daily_limit: Math.max(1, int(d.daily_limit, 30, 200)) };
   const kb = b.khatma || {};
   const dayList = [...new Set((Array.isArray(kb.days) ? kb.days : String(kb.days || '').split(/[\s,;]+/)).map((x) => int(x, 0, 30)).filter((x) => x >= 1))].sort((a, b) => a - b).slice(0, 4);
   const khatma = { enabled: kb.enabled !== false, days: dayList.length ? dayList : [3, 7, 14], bonus: int(kb.bonus, 50, 1000), pct: Math.max(50, int(kb.pct, 80, 100)) };

@@ -214,13 +214,14 @@ function Settings() {
         </div>
       </Card>
       <Card className="col-span-2">
-        <CardHead title="Duels 1 contre 1" sub={`Duels en différé : mêmes questions pour les deux joueurs. 30 derniers jours : ${num(data.duels?.total || 0)} duels, ${num(data.duels?.termines || 0)} terminés, ${num(data.duels?.en_cours || 0)} en cours, ${num(data.duels?.joueurs || 0)} joueurs.`} />
+        <CardHead title="Duels en direct" sub={`Invitation par nom d'utilisateur, les deux joueurs en même temps, questions de tous les jeux mélangées. 30 derniers jours : ${num(data.duels?.total || 0)} défis, ${num(data.duels?.termines || 0)} joués, ${num(data.duels?.abandons || 0)} abandons, ${num(data.duels?.refuses || 0)} refusés ou sans réponse, ${num(data.duels?.joueurs || 0)} joueurs.`} />
         <div className="px-4 pb-4 grid grid-cols-4 gap-4 items-end">
           <label className="flex items-center gap-3 rounded-xl border-2 border-line px-3 h-11">
             <input type="checkbox" className="w-5 h-5 accent-[#00A3A8]" disabled={!write} checked={s.duel?.enabled !== false} onChange={(e) => setS({ ...s, duel: { ...s.duel, enabled: e.target.checked } })} />
             <span className="font-extrabold">Duels activés</span>
           </label>
-          {[['hours', 'Délai pour jouer', 'heures, 1 à 168', 24], ['win_bonus', 'Bonus de victoire', 'points', 20], ['daily_limit', 'Duels lancés par jour', 'par joueur', 10]].map(([k, label, hint, d]) => (
+          {[['questions', 'Questions par duel', '3 à 15', 7], ['secs', 'Temps par question', 'secondes', 15], ['secs_ordre', 'Temps « Remets dans l\'ordre »', 'secondes', 25], ['invite_secs', 'Délai pour accepter', 'secondes', 60],
+            ['win', 'Victoire', 'points gagnés', 30], ['draw', 'Égalité', 'points gagnés', 5], ['loss', 'Défaite', 'points retirés', 10], ['quit', 'Abandon', 'points retirés', 20], ['daily_limit', 'Défis lancés par jour', 'par joueur', 30]].map(([k, label, hint, d]) => (
             <div key={k}><Label hint={hint}>{label}</Label><Input type="number" min="1" className="w-full" disabled={!write} value={s.duel?.[k] ?? d} onChange={(e) => setS({ ...s, duel: { ...s.duel, [k]: e.target.value } })} /></div>
           ))}
         </div>
