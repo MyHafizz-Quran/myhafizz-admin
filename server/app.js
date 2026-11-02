@@ -696,7 +696,6 @@ app.get('/api/system', async (c) => {
   });
 });
 
-app.all('/api/*', () => { throw fail(404, 'Route inconnue.'); });
 
 // ---------- Parcours : Tajwid, ligues, Défi du jour ----------
 const STAT = new Set(['review', 'published', 'hidden']);
@@ -941,5 +940,8 @@ app.get('/api/data/live', async (c) => {
     LEFT JOIN profiles pr ON pr.id = p.user_id WHERE p.seen_at > now() - interval '15 minutes' ORDER BY p.seen_at DESC LIMIT 20`);
   return c.json(r);
 });
+
+// Toujours en dernier : sinon les routes déclarées après renvoient 404.
+app.all('/api/*', () => { throw fail(404, 'Route inconnue.'); });
 
 export default app;
